@@ -1,0 +1,72 @@
+<!DOCTYPE idea-plugin PUBLIC "Plugin/DTD" "https://plugins.jetbrains.com/plugin.dtd">
+<idea-plugin>
+    <id>com.kcodereview.plugin</id>
+    <name>K Code Review</name>
+    <vendor email="dev@kcodereview.local" url="https://github.com/k-code-review">K Code Review</vendor>
+
+    <description><![CDATA[
+      <h2>AI-powered Git commit code review</h2>
+      <p>
+        Reviews changed classes in a Git commit with Gemini AI and surfaces
+        SonarQube-style findings: severity, category, explanation, and how-to-fix guidance.
+      </p>
+      <ul>
+        <li>Pre-commit gate: reviews staged changes; blocks once on any finding, second Commit proceeds</li>
+        <li>Code Analysis tool window: warnings list + detail inspector (how-to-fix + fixed code)</li>
+        <li>Review latest or selected commit</li>
+        <li>Priority classification (BLOCKER → INFO)</li>
+        <li>Custom review prompts</li>
+        <li>Secure API key storage via PasswordSafe</li>
+      </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.kcodereview.settings.KCodeReviewConfigurable"
+                id="com.kcodereview.settings"
+                displayName="K Code Review"/>
+
+        <applicationService serviceImplementation="com.kcodereview.settings.KCodeReviewSettings"/>
+        <projectService serviceImplementation="com.kcodereview.service.CodeReviewService"/>
+        <projectService serviceImplementation="com.kcodereview.git.GitCommitService"/>
+        <projectService serviceImplementation="com.kcodereview.service.PreCommitOverrideService"/>
+
+        <checkinHandlerFactory implementation="com.kcodereview.commit.KCodeReviewCheckinHandlerFactory"/>
+
+        <toolWindow
+                id="K Code Review"
+                anchor="bottom"
+                secondary="false"
+                icon="/icons/kCodeReviewToolWindow.svg"
+                factoryClass="com.kcodereview.ui.ReviewToolWindowFactory"/>
+
+        <notificationGroup id="K Code Review" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="KCodeReview.Menu" text="K Code Review" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="KCodeReview.ReviewLatestCommit"
+                    class="com.kcodereview.actions.ReviewLatestCommitAction"
+                    text="Review Latest Commit"
+                    description="AI-review the latest Git commit"/>
+            <action id="KCodeReview.ReviewSelectedCommit"
+                    class="com.kcodereview.actions.ReviewSelectedCommitAction"
+                    text="Review Selected Commit…"
+                    description="Pick a commit and run AI review"/>
+            <action id="KCodeReview.ShowToolWindow"
+                    class="com.kcodereview.actions.ShowToolWindowAction"
+                    text="Open Analysis Panel"
+                    description="Open the K Code Review warnings panel"/>
+            <action id="KCodeReview.OpenSettings"
+                    class="com.kcodereview.actions.OpenSettingsAction"
+                    text="Settings…"
+                    description="Open K Code Review settings"/>
+        </group>
+    </actions>
+</idea-plugin>
