@@ -3,48 +3,54 @@ package com.kcodereview.ai
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.kcodereview.settings.KCodeReviewSettings
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 
+/**
+ * LLM client for the Google Gemini generateContent API.
+ *
+ * The API key is appended as a `?key=` query parameter.
+ * The model is embedded in [endpointUrl] (e.g. `.../models/gemini-2.0-flash:generateContent`).
+ */
 class GeminiClient(
-    private val httpClient: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(20))
-        .build(),
+    private val apiKey: String,
+    private val endpointUrl: String,
+    private val httpClient: HttpClient = sharedHttpClient,
     private val gson: Gson = Gson(),
-) {
+) : LlmClient {
 
-    fun generate(systemPrompt: String, userPrompt: String): String {
-        val settings = KCodeReviewSettings.getInstance()
-        val apiKey = settings.getApiKey()
+    override fun generate(systemPrompt: String, userPrompt: String): String {
         require(apiKey.isNotBlank()) {
-            "Gemini API key is not configured. Open Settings → Tools → K Code Review."
+            "LLM API key is not configured. Open Settings → Tools → K Code Review."
         }
 
-        val model = settings.geminiModel
-        val url =
-            "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val baseUrl = endpointUrl.trimEnd('/')
+        val url = if ('?' in baseUrl) "$baseUrl&key=$apiKey" else "$baseUrl?key=$apiKey"
 
         val body = JsonObject().apply {
-            add("contents", gson.toJsonTree(
-                listOf(
-                    mapOf(
-                        "role" to "user",
-                        "parts" to listOf(
-                            mapOf("text" to "$systemPrompt\n\n---\n\n$userPrompt"),
+            add(
+                "contents",
+                gson.toJsonTree(
+                    listOf(
+                        mapOf(
+                            "role" to "user",
+                            "parts" to listOf(mapOf("text" to "$systemPrompt\n\n---\n\n$userPrompt")),
                         ),
                     ),
                 ),
-            ))
-            add("generationConfig", gson.toJsonTree(
-                mapOf(
-                    "temperature" to 0.2,
-                    "responseMimeType" to "application/json",
+            )
+            add(
+                "generationConfig",
+                gson.toJsonTree(
+                    mapOf(
+                        "temperature" to 0.2,
+                        "responseMimeType" to "application/json",
+                    ),
                 ),
-            ))
+            )
         }
 
         val request = HttpRequest.newBuilder()
@@ -55,29 +61,40 @@ class GeminiClient(
             .build()
 
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException(
-                "Gemini API error HTTP ${response.statusCode()}: ${response.body().take(500)}",
-            )
+        check(response.statusCode() in 200..299) {
+            "Gemini API error HTTP ${response.statusCode()}: ${response.body().take(500)}"
         }
 
         return extractText(response.body())
     }
 
-    fun extractText(responseBody: String): String {
-        val root = JsonParser.parseString(responseBody).asJsonObject
-        val candidates = root.getAsJsonArray("candidates")
-            ?: throw IllegalStateException("Gemini response missing candidates")
-        if (candidates.size() == 0) {
-            throw IllegalStateException("Gemini returned no candidates")
+    // -------------------------------------------------------------------------
+    // Companion — pure parsing logic, no I/O (testable without auth)
+    // -------------------------------------------------------------------------
+
+    companion object {
+
+        /** Shared HttpClient — one per JVM is enough (thread-safe). */
+        internal val sharedHttpClient: HttpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(20))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build()
+
+        /**
+         * Extracts the text content from a Gemini generateContent JSON response.
+         * Exposed as a companion function so tests can call it without an API key.
+         */
+        fun extractText(responseBody: String): String {
+            val root = JsonParser.parseString(responseBody).asJsonObject
+            val candidates = root.getAsJsonArray("candidates")
+                ?: throw IllegalStateException("Gemini response missing 'candidates'")
+            check(candidates.size() > 0) { "Gemini returned no candidates" }
+            val parts = candidates[0].asJsonObject
+                .getAsJsonObject("content")
+                .getAsJsonArray("parts")
+            val text = parts.joinToString("\n") { it.asJsonObject.get("text")?.asString.orEmpty() }.trim()
+            require(text.isNotBlank()) { "Gemini returned empty text" }
+            return text
         }
-        val parts = candidates[0].asJsonObject
-            .getAsJsonObject("content")
-            .getAsJsonArray("parts")
-        val text = parts.joinToString("\n") { part ->
-            part.asJsonObject.get("text")?.asString.orEmpty()
-        }.trim()
-        require(text.isNotBlank()) { "Gemini returned empty text" }
-        return text
     }
 }

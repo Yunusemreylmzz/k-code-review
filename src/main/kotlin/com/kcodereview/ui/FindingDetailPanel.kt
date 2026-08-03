@@ -1,172 +1,105 @@
 package com.kcodereview.ui
 
+import com.intellij.openapi.project.ProjectManager
+import com.intellij.ui.BrowserHyperlinkListener
 import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import com.kcodereview.model.Finding
 import com.kcodereview.model.Severity
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
-import java.awt.Font
-import java.awt.GridLayout
-import javax.swing.BorderFactory
+import javax.swing.JEditorPane
 import javax.swing.JPanel
-import javax.swing.JTextArea
-import javax.swing.border.EmptyBorder
-import javax.swing.border.TitledBorder
+import javax.swing.text.html.HTMLEditorKit
 
 /**
  * RIGHT column of Code Analysis — always visible.
+ * Styled to look like SonarQube for IDE.
  */
 class FindingDetailPanel : JPanel(BorderLayout()) {
 
-    private val titleLabel = JBLabel("Select a warning on the left").apply {
-        font = font.deriveFont(Font.BOLD, 16f)
+    private val editorPane = JEditorPane("text/html", "").apply {
+        isEditable = false
+        isOpaque = false
+        addHyperlinkListener(BrowserHyperlinkListener.INSTANCE)
+        val htmlKit = UIUtil.getHTMLEditorKit()
+        val sheet = htmlKit.styleSheet
+        sheet.addRule("h2 { font-size: 110%; font-weight: bold; margin-bottom: 4px; font-style: italic; }")
+        sheet.addRule("h3 { font-size: 100%; font-weight: bold; margin-top: 12px; margin-bottom: 4px; }")
+        sheet.addRule(".hr { border-bottom: 1px solid #555555; margin-bottom: 8px; }")
+        sheet.addRule(".tags { margin-bottom: 12px; font-size: 90%; color: #888888; }")
+        sheet.addRule(".code { font-family: monospace; font-size: 95%; background-color: #2b2d30; color: #a9b7c6; padding: 8px; margin-top: 8px; white-space: pre; }")
+        editorKit = htmlKit
     }
-    private val priorityLabel = JBLabel(" ").apply {
-        font = font.deriveFont(Font.BOLD, 12f)
-        border = JBUI.Borders.empty(4, 10)
-        isOpaque = true
-    }
-    private val metaLabel = JBLabel(" ").apply { foreground = JBColor.GRAY }
-
-    private val explanationArea = textArea(wrap = true, rows = 6)
-    private val howToFixArea = textArea(
-        wrap = true,
-        rows = 5,
-        background = JBColor(Color(245, 248, 240), Color(40, 48, 40)),
-    )
-    private val fixedCodeArea = textArea(
-        wrap = false,
-        rows = 7,
-        background = JBColor(Color(246, 248, 250), Color(30, 32, 36)),
-        mono = true,
-    )
 
     init {
-        border = BorderFactory.createCompoundBorder(
-            BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(JBColor(Color(70, 130, 180), Color(100, 160, 210)), 2),
-                "Warning details",
-                TitledBorder.LEFT,
-                TitledBorder.TOP,
-            ),
-            EmptyBorder(8, 10, 8, 10),
-        )
-        background = JBColor(Color(250, 251, 252), Color(43, 45, 48))
+        border = JBUI.Borders.empty()
+        background = JBColor.background()
         isOpaque = true
         minimumSize = Dimension(280, 200)
         preferredSize = Dimension(480, 400)
-
-        val header = JPanel(BorderLayout(8, 6)).apply {
-            isOpaque = false
-            add(titleLabel, BorderLayout.NORTH)
-            add(JPanel(BorderLayout(8, 0)).apply {
-                isOpaque = false
-                add(priorityLabel, BorderLayout.WEST)
-                add(metaLabel, BorderLayout.CENTER)
-            }, BorderLayout.SOUTH)
-        }
-
-        val sections = JPanel(GridLayout(3, 1, 0, 8)).apply {
-            isOpaque = false
-            add(titled("1. AI detailed explanation", explanationArea))
-            add(titled("2. What to do / How to fix", howToFixArea))
-            add(titled("3. AI suggested fixed code", fixedCodeArea))
-        }
-
-        add(header, BorderLayout.NORTH)
-        add(sections, BorderLayout.CENTER)
+        add(JBScrollPane(editorPane).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         showFinding(null)
     }
 
     fun showFinding(finding: Finding?) {
         if (finding == null) {
-            titleLabel.text = "Select a warning on the left"
-            priorityLabel.text = "  —  "
-            priorityLabel.isOpaque = true
-            priorityLabel.background = JBColor.GRAY
-            priorityLabel.foreground = Color.WHITE
-            metaLabel.text = "Left list → click a row to fill this panel"
-            explanationArea.text = "Waiting for selection…"
-            howToFixArea.text = ""
-            fixedCodeArea.text = ""
-            revalidate()
-            repaint()
+            editorPane.text = "<html><body><h3 style='color:gray'>Select a warning on the left</h3></body></html>"
             return
         }
 
         val content = FindingDetailContent.from(finding)
-        titleLabel.text = content.title
-        metaLabel.text = "${content.location}  ·  ${finding.category.displayName}" +
-            (finding.ruleKey?.let { "  ·  $it" } ?: "")
-        priorityLabel.text = "  PRIORITY: ${content.priority}  "
-        priorityLabel.isOpaque = true
-        priorityLabel.background = severityColor(finding.severity)
-        priorityLabel.foreground = when (finding.severity) {
-            Severity.MAJOR, Severity.INFO -> JBColor(Color(25, 25, 25), Color(20, 20, 20))
-            else -> Color.WHITE
+        val priorityColor = getHtmlColor(severityColor(finding.severity))
+        
+        val ruleKeyHtml = if (finding.ruleKey != null) " &nbsp;&nbsp; <span>${finding.ruleKey}</span>" else ""
+        
+        val html = buildString {
+            append("<html><body>")
+            append("<h2>${escape(content.title)}</h2>")
+            append("<div class='tags'>")
+            append("<b><font color='$priorityColor'>${content.priority}</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; ")
+            append("<span>${finding.category.displayName}</span>")
+            append(ruleKeyHtml)
+            append("</div>")
+            
+            append("<h3>Why is this an issue?</h3>")
+            append("<div class='hr'></div>")
+            append("<p>${escape(content.explanation).replace("\n", "<br>")}</p>")
+            
+            append("<h3>How to fix</h3>")
+            append("<p>${escape(content.howToFix).replace("\n", "<br>")}</p>")
+            
+            if (content.fixedCode.isNotBlank() && content.fixedCode != "// No fixed-code sample for this finding.") {
+                append("<h3>Suggested Fix</h3>")
+                append("<div class='code'>${escape(content.fixedCode)}</div>")
+            }
+            append("</body></html>")
         }
-        explanationArea.text = content.explanation.ifBlank { "No detailed explanation provided." }
-        howToFixArea.text = content.howToFix.ifBlank { "No remediation steps provided." }
-        fixedCodeArea.text = content.fixedCode.ifBlank { "// No fixed-code sample for this finding." }
-        explanationArea.caretPosition = 0
-        howToFixArea.caretPosition = 0
-        fixedCodeArea.caretPosition = 0
-        revalidate()
-        repaint()
+        
+        editorPane.text = html
+        editorPane.caretPosition = 0
     }
 
     fun showEmptyReviewSummaries(text: String) {
-        titleLabel.text = "No warnings"
-        priorityLabel.text = "  OK  "
-        priorityLabel.isOpaque = true
-        priorityLabel.background = JBColor(Color(46, 125, 50), Color(76, 175, 80))
-        priorityLabel.foreground = Color.WHITE
-        metaLabel.text = "Review completed without findings"
-        explanationArea.text = text
-        howToFixArea.text = "Nothing to fix."
-        fixedCodeArea.text = ""
-        revalidate()
-        repaint()
+        editorPane.text = "<html><body><h2>No warnings</h2><p>${escape(text).replace("\n", "<br>")}</p></body></html>"
     }
 
-    private fun titled(title: String, area: JTextArea): JPanel =
-        JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(JBColor.border()),
-                title,
-                TitledBorder.LEFT,
-                TitledBorder.TOP,
-            )
-            add(JBScrollPane(area), BorderLayout.CENTER)
-        }
+    private fun escape(text: String): String =
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    private fun textArea(
-        wrap: Boolean,
-        rows: Int,
-        background: Color = JBColor.background(),
-        mono: Boolean = false,
-    ): JBTextArea = JBTextArea(rows, 40).apply {
-        isEditable = false
-        lineWrap = wrap
-        wrapStyleWord = wrap
-        border = JBUI.Borders.empty(6)
-        this.background = background
-        if (mono) font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-    }
+    private fun getHtmlColor(color: Color): String =
+        String.format("#%02x%02x%02x", color.red, color.green, color.blue)
 
     companion object {
         fun severityColor(severity: Severity): Color = when (severity) {
-            Severity.BLOCKER -> JBColor(Color(180, 35, 24), Color(198, 40, 40))
-            Severity.CRITICAL -> JBColor(Color(210, 90, 20), Color(230, 126, 34))
-            Severity.MAJOR -> JBColor(Color(180, 140, 20), Color(241, 196, 15))
-            Severity.MINOR -> JBColor(Color(40, 120, 200), Color(52, 152, 219))
-            Severity.INFO -> JBColor(Color(100, 100, 100), Color(149, 165, 166))
+            Severity.BLOCKER -> JBColor(Color(180, 35, 24), Color(255, 82, 82))
+            Severity.CRITICAL -> JBColor(Color(210, 90, 20), Color(255, 138, 101))
+            Severity.MAJOR -> JBColor(Color(180, 140, 20), Color(255, 213, 79))
+            Severity.MINOR -> JBColor(Color(40, 120, 200), Color(100, 181, 246))
+            Severity.INFO -> JBColor(Color(100, 100, 100), Color(158, 158, 158))
         }
     }
 }

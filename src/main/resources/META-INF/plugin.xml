@@ -1,4 +1,3 @@
-<!DOCTYPE idea-plugin PUBLIC "Plugin/DTD" "https://plugins.jetbrains.com/plugin.dtd">
 <idea-plugin>
     <id>com.kcodereview.plugin</id>
     <name>K Code Review</name>

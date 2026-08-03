@@ -13,7 +13,7 @@ kotlin {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity(providers.gradleProperty("platformVersion").get())
+        local("/Applications/IntelliJ IDEA.app")
         bundledPlugin("Git4Idea")
     }
 
@@ -30,14 +30,8 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("version")
         ideaVersion {
-            sinceBuild = "243"
+            sinceBuild = "251"
             untilBuild = provider { null }
-        }
-    }
-
-    pluginVerification {
-        ides {
-            recommended()
         }
     }
 }
@@ -53,6 +47,6 @@ tasks {
     }
 
     wrapper {
-        gradleVersion = "8.12.1"
+        gradleVersion = "9.0.0"
     }
 }

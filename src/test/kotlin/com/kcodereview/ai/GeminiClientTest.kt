@@ -20,7 +20,28 @@ class GeminiClientTest {
               ]
             }
         """.trimIndent()
-        val text = GeminiClient().extractText(body)
+        val text = GeminiClient.extractText(body)
         assertTrue(text.contains("summary"))
+    }
+
+    @Test
+    fun `extractText joins multiple parts`() {
+        val body = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {"text": "part1"},
+                      {"text": "part2"}
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        val text = GeminiClient.extractText(body)
+        assertTrue(text.contains("part1"))
+        assertTrue(text.contains("part2"))
     }
 }

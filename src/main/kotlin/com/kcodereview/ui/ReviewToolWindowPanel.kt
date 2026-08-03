@@ -11,10 +11,12 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
 import com.kcodereview.model.Finding
 import com.kcodereview.model.ReviewResult
@@ -34,15 +36,15 @@ import java.awt.Insets
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
-import javax.swing.DefaultListCellRenderer
-import javax.swing.DefaultListModel
 import javax.swing.JButton
-import javax.swing.JLabel
-import javax.swing.JList
 import javax.swing.JPanel
-import javax.swing.ListSelectionModel
+import javax.swing.JTree
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
+import javax.swing.event.TreeSelectionListener
+import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreePath
 
 /**
  * Code Analysis — always 2 columns:
@@ -55,21 +57,17 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
 
     private val log = Logger.getInstance(ReviewToolWindowPanel::class.java)
     private val service = project.getService(CodeReviewService::class.java)
-    private val listModel = DefaultListModel<Finding>()
-    private val warningsList = JBList(listModel).apply {
-        selectionMode = ListSelectionModel.SINGLE_SELECTION
-        fixedCellHeight = 52
-        cellRenderer = WarningListCellRenderer()
+    
+    private val rootNode = DefaultMutableTreeNode("No analysis results")
+    private val treeModel = DefaultTreeModel(rootNode)
+    private val warningsTree = Tree(treeModel).apply {
+        isRootVisible = true
+        showsRootHandles = true
+        cellRenderer = WarningTreeCellRenderer()
         emptyText.text = "No warnings"
     }
 
     private val detailPanel = FindingDetailPanel()
-    private val summaryLabel = JBLabel("Code Analysis")
-    private val blockerStat = MetricCard("BLOCKER", FindingDetailPanel.severityColor(Severity.BLOCKER))
-    private val criticalStat = MetricCard("CRITICAL", FindingDetailPanel.severityColor(Severity.CRITICAL))
-    private val majorStat = MetricCard("MAJOR", FindingDetailPanel.severityColor(Severity.MAJOR))
-    private val minorStat = MetricCard("MINOR", FindingDetailPanel.severityColor(Severity.MINOR))
-    private val infoStat = MetricCard("INFO", FindingDetailPanel.severityColor(Severity.INFO))
 
     private val listener: (ReviewResult?) -> Unit = { result ->
         ApplicationManager.getApplication().invokeLater {
@@ -83,13 +81,17 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         minimumSize = Dimension(700, 280)
 
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-            add(JButton("Load Demo UI", AllIcons.Actions.Preview).also { btn ->
-                btn.addActionListener {
-                    service.publishResult(DemoFindings.reviewResult())
-                }
+            add(JButton("Review Staged Changes", AllIcons.Actions.RunAll).also { btn ->
+                btn.toolTipText = "Run K Code Review on currently staged (changed) files — same as the pre-commit check"
+                btn.addActionListener { runStagedChanges() }
             })
             add(JButton("Review Latest Commit", AllIcons.Actions.Execute).also { btn ->
                 btn.addActionListener { runLatest() }
+            })
+            add(JButton("Load Demo", AllIcons.Actions.Preview).also { btn ->
+                btn.addActionListener {
+                    service.publishResult(DemoFindings.reviewResult())
+                }
             })
             add(JButton("Settings", AllIcons.General.Settings).also { btn ->
                 btn.addActionListener {
@@ -98,28 +100,18 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
             })
         }
 
-        val metrics = JPanel(GridLayout(1, 5, 8, 0)).apply {
-            border = JBUI.Borders.empty(4, 0, 8, 0)
-            add(blockerStat); add(criticalStat); add(majorStat); add(minorStat); add(infoStat)
-        }
-
         val north = JPanel(BorderLayout()).apply {
             add(toolbar, BorderLayout.NORTH)
-            add(summaryLabel.apply { border = JBUI.Borders.empty(4, 2) }, BorderLayout.CENTER)
-            add(metrics, BorderLayout.SOUTH)
         }
 
         val listPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createCompoundBorder(
-                BorderFactory.createTitledBorder(
-                    BorderFactory.createLineBorder(JBColor.border()),
-                    "Warnings (click = details, double-click = go to code)",
-                ),
-                JBUI.Borders.empty(4),
+                JBUI.Borders.customLine(JBColor.border(), 0, 0, 0, 1), // Only right border
+                JBUI.Borders.empty()
             )
             background = JBColor.background()
             isOpaque = true
-            add(JBScrollPane(warningsList), BorderLayout.CENTER)
+            add(JBScrollPane(warningsTree).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         }
 
         // GridBagLayout: weights guarantee both columns always get space.
@@ -147,21 +139,19 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         add(north, BorderLayout.NORTH)
         add(body, BorderLayout.CENTER)
 
-        warningsList.addListSelectionListener { e ->
-            if (e.valueIsAdjusting) return@addListSelectionListener
-            val finding = warningsList.selectedValue
+        warningsTree.addTreeSelectionListener { e ->
+            val node = warningsTree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return@addTreeSelectionListener
+            val finding = node.userObject as? Finding
             if (finding != null) {
                 log.info("Warning selected: ${finding.title}")
                 detailPanel.showFinding(finding)
             }
         }
-        warningsList.addMouseListener(object : MouseAdapter() {
+        warningsTree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
-                val index = warningsList.locationToIndex(e.point)
-                if (index < 0) return
-                warningsList.selectedIndex = index
-                val finding = listModel.getElementAt(index)
-                detailPanel.showFinding(finding)
+                val path = warningsTree.getPathForLocation(e.x, e.y) ?: return
+                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
+                val finding = node.userObject as? Finding ?: return
                 if (e.clickCount >= 2) {
                     navigateToFinding(finding)
                 }
@@ -184,12 +174,22 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
     }
 
     private fun runLatest() {
+        runReview("Reviewing latest commit…") { service.reviewLatestCommit() }
+    }
+
+    private fun runStagedChanges() {
+        runReview("Reviewing staged (changed) files…") {
+            service.reviewStagedChanges("Manual review")
+                ?: throw IllegalStateException("No staged source files to review. Stage some changes first.")
+        }
+    }
+
+    private fun runReview(progressText: String, block: () -> Any?) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "K Code Review", true) {
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Reviewing latest commit…"
-                try {
-                    service.reviewLatestCommit()
-                } catch (ex: Exception) {
+                indicator.text = progressText
+                indicator.isIndeterminate = true
+                runCatching { block() }.onFailure { ex ->
                     ApplicationManager.getApplication().invokeLater {
                         Messages.showErrorDialog(project, ex.message ?: "Review failed", "K Code Review")
                     }
@@ -199,19 +199,26 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
     }
 
     private fun render(result: ReviewResult?) {
-        listModel.clear()
+        rootNode.removeAllChildren()
+        
         if (result == null) {
-            summaryLabel.text = "Code Analysis — empty"
-            updateMetrics(emptyMap())
+            rootNode.userObject = "No analysis results."
+            treeModel.reload()
             detailPanel.showFinding(null)
             return
         }
-        result.findings.forEach { listModel.addElement(it) }
-        updateMetrics(result.countBySeverity())
-        summaryLabel.text =
-            "Code Analysis — ${result.commitHash.take(8)} · ${result.totalFindings} warnings · ${result.commitMessage.lineSequence().firstOrNull()}"
+        
+        rootNode.userObject = "Found ${result.totalFindings} issues"
+        
+        result.findings.forEach { 
+            rootNode.add(DefaultMutableTreeNode(it))
+        }
+        
+        treeModel.reload()
+        
         if (result.findings.isNotEmpty()) {
-            warningsList.selectedIndex = 0
+            warningsTree.expandPath(TreePath(rootNode.path))
+            warningsTree.selectionPath = TreePath((rootNode.firstChild as DefaultMutableTreeNode).path)
             detailPanel.showFinding(result.findings.first())
         } else {
             detailPanel.showEmptyReviewSummaries(
@@ -223,14 +230,6 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         repaint()
     }
 
-    private fun updateMetrics(counts: Map<Severity, Int>) {
-        blockerStat.setCount(counts[Severity.BLOCKER] ?: 0)
-        criticalStat.setCount(counts[Severity.CRITICAL] ?: 0)
-        majorStat.setCount(counts[Severity.MAJOR] ?: 0)
-        minorStat.setCount(counts[Severity.MINOR] ?: 0)
-        infoStat.setCount(counts[Severity.INFO] ?: 0)
-    }
-
     private fun navigateToFinding(finding: Finding) {
         val base = project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath("$base/${finding.filePath}")
@@ -240,52 +239,38 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         OpenFileDescriptor(project, vf, line, 0).navigate(true)
     }
 
-    private class MetricCard(title: String, accent: Color) : JPanel(BorderLayout()) {
-        private val countLabel = JBLabel("0", SwingConstants.CENTER).apply {
-            font = font.deriveFont(Font.BOLD, 20f)
-            foreground = accent
-        }
+    // MetricCard removed
 
-        init {
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(JBColor.border(), 1),
-                JBUI.Borders.empty(6),
-            )
-            add(JBLabel(title, SwingConstants.CENTER).apply {
-                foreground = accent
-                font = font.deriveFont(Font.BOLD, 11f)
-            }, BorderLayout.NORTH)
-            add(countLabel, BorderLayout.CENTER)
-        }
-
-        fun setCount(count: Int) {
-            countLabel.text = count.toString()
-        }
-    }
-
-    private class WarningListCellRenderer : DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(
-            list: JList<*>?,
+    private class WarningTreeCellRenderer : ColoredTreeCellRenderer() {
+        override fun customizeCellRenderer(
+            tree: JTree,
             value: Any?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean,
-        ): Component {
-            val label = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus) as JLabel
-            val finding = value as? Finding ?: return label
-            label.text = "<html><b>[${finding.severity.displayName}]</b> ${escape(finding.title)}<br>" +
-                "<font color='gray'>${escape(finding.locationLabel())}</font></html>"
-            label.icon = when (finding.severity) {
-                Severity.BLOCKER, Severity.CRITICAL -> AllIcons.General.Error
-                Severity.MAJOR -> AllIcons.General.Warning
-                else -> AllIcons.General.Information
+            selected: Boolean,
+            expanded: Boolean,
+            leaf: Boolean,
+            row: Int,
+            hasFocus: Boolean
+        ) {
+            val node = value as? DefaultMutableTreeNode ?: return
+            val userObject = node.userObject
+            
+            if (userObject is String) {
+                append(userObject, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+            } else if (userObject is Finding) {
+                icon = when (userObject.severity) {
+                    Severity.BLOCKER, Severity.CRITICAL -> AllIcons.General.Error
+                    Severity.MAJOR -> AllIcons.General.Warning
+                    else -> AllIcons.General.Information
+                }
+                
+                val lineStr = userObject.line?.let { "$it" } ?: "-"
+                append("($lineStr) ", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                append("${userObject.title}. ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                
+                if (userObject.ruleKey != null) {
+                    append(userObject.ruleKey, SimpleTextAttributes.GRAY_ATTRIBUTES)
+                }
             }
-            label.border = JBUI.Borders.empty(6, 8)
-            if (!isSelected) label.foreground = JBColor.foreground()
-            return label
         }
-
-        private fun escape(text: String): String =
-            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     }
 }

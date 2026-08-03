@@ -10,14 +10,25 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.SlowOperations
+import com.kcodereview.ai.LlmProvider
 
 @Service(Service.Level.APP)
 @State(name = "KCodeReviewSettings", storages = [Storage("kCodeReview.xml")])
 class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> {
 
     data class State(
-        var geminiModel: String = DEFAULT_MODEL,
-        var customPrompt: String = "",
+        /** Display name of the selected model (key into [LlmModel.ALL]). */
+        var selectedModelName: String = DEFAULT_MODEL_NAME,
+
+        // ── Custom-model fields (used only when selectedModelName == LlmModel.CUSTOM.displayName)
+        var customUrl: String = "",
+        var customModelId: String = "",
+        /** Serialised name of the [LlmProvider] enum — the wire format for the custom model. */
+        var customProviderFormat: String = LlmProvider.OPENAI.name,
+
+        /** GitHub (or raw) URL for the system prompt file (optional). */
+        var promptFileUrl: String = "",
+
         var maxFilesPerReview: Int = 20,
         var maxCharsPerFile: Int = 40_000,
         var includePatchContext: Boolean = true,
@@ -27,64 +38,76 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
     private var state = State()
 
     override fun getState(): State = state
+    override fun loadState(state: State) { this.state = state }
 
-    override fun loadState(state: State) {
-        this.state = state
-    }
+    // -------------------------------------------------------------------------
+    // Persisted properties
+    // -------------------------------------------------------------------------
 
-    var geminiModel: String
-        get() = state.geminiModel.ifBlank { DEFAULT_MODEL }
-        set(value) {
-            state.geminiModel = value.ifBlank { DEFAULT_MODEL }
-        }
+    var selectedModelName: String
+        get() = state.selectedModelName
+        set(value) { state.selectedModelName = value }
 
-    var customPrompt: String
-        get() = state.customPrompt
-        set(value) {
-            state.customPrompt = value
-        }
+    var customUrl: String
+        get() = state.customUrl
+        set(value) { state.customUrl = value.trim() }
+
+    var customModelId: String
+        get() = state.customModelId
+        set(value) { state.customModelId = value.trim() }
+
+    var customProviderFormat: LlmProvider
+        get() = LlmProvider.fromName(state.customProviderFormat)
+        set(value) { state.customProviderFormat = value.name }
+
+    var promptFileUrl: String
+        get() = state.promptFileUrl
+        set(value) { state.promptFileUrl = value.trim() }
 
     var maxFilesPerReview: Int
         get() = state.maxFilesPerReview.coerceIn(1, 100)
-        set(value) {
-            state.maxFilesPerReview = value.coerceIn(1, 100)
-        }
+        set(value) { state.maxFilesPerReview = value.coerceIn(1, 100) }
 
     var maxCharsPerFile: Int
         get() = state.maxCharsPerFile.coerceIn(2_000, 200_000)
-        set(value) {
-            state.maxCharsPerFile = value.coerceIn(2_000, 200_000)
-        }
+        set(value) { state.maxCharsPerFile = value.coerceIn(2_000, 200_000) }
 
     var includePatchContext: Boolean
         get() = state.includePatchContext
-        set(value) {
-            state.includePatchContext = value
-        }
+        set(value) { state.includePatchContext = value }
 
     var preCommitReviewEnabled: Boolean
         get() = state.preCommitReviewEnabled
-        set(value) {
-            state.preCommitReviewEnabled = value
-        }
+        set(value) { state.preCommitReviewEnabled = value }
+
+    // -------------------------------------------------------------------------
+    // API key — PasswordSafe (never written to XML)
+    // -------------------------------------------------------------------------
 
     fun getApiKey(): String = SlowOperations.knownIssue("KCR-1").use {
         PasswordSafe.instance.getPassword(credentialAttributes()).orEmpty()
     }
 
-    fun setApiKey(apiKey: String) {
-        SlowOperations.knownIssue("KCR-1").use {
-            val credentials = if (apiKey.isBlank()) null else Credentials("gemini", apiKey.trim())
-            PasswordSafe.instance.set(credentialAttributes(), credentials)
-        }
+    fun setApiKey(apiKey: String) = SlowOperations.knownIssue("KCR-1").use {
+        val creds = if (apiKey.isBlank()) null else Credentials("llm", apiKey.trim())
+        PasswordSafe.instance.set(credentialAttributes(), creds)
+    }
+
+    // -------------------------------------------------------------------------
+    // Remote prompt (fetched from URL, cached 5 min)
+    // -------------------------------------------------------------------------
+
+    fun getCustomPrompt(): String {
+        if (promptFileUrl.isBlank()) return ""
+        return runCatching { RemoteConfigFetcher.fetch(promptFileUrl) }.getOrDefault("")
     }
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-2.0-flash"
+        const val DEFAULT_MODEL_NAME = "Gemini 2.0 Flash"
 
         fun getInstance(): KCodeReviewSettings = service()
 
         private fun credentialAttributes(): CredentialAttributes =
-            CredentialAttributes(generateServiceName("K Code Review", "Gemini API Key"))
+            CredentialAttributes(generateServiceName("K Code Review", "LLM API Key"))
     }
 }

@@ -10,7 +10,7 @@ object PromptBuilder {
 
     fun systemPrompt(customPrompt: String? = null): String {
         val custom = customPrompt ?: runCatching {
-            KCodeReviewSettings.getInstance().customPrompt
+            KCodeReviewSettings.getInstance().getCustomPrompt()
         }.getOrDefault("")
         if (custom.isNotBlank()) return custom.trim()
         return defaultSystemPrompt()

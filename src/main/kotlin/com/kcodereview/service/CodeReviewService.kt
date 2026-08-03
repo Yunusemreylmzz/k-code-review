@@ -3,7 +3,7 @@ package com.kcodereview.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.kcodereview.ai.GeminiClient
+import com.kcodereview.ai.LlmClientFactory
 import com.kcodereview.ai.PromptBuilder
 import com.kcodereview.ai.ReviewParser
 import com.kcodereview.git.GitCommitService
@@ -17,7 +17,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 class CodeReviewService(private val project: Project) {
 
     private val log = Logger.getInstance(CodeReviewService::class.java)
-    private val gemini = GeminiClient()
     private val listeners = CopyOnWriteArrayList<(ReviewResult?) -> Unit>()
 
     @Volatile
@@ -64,9 +63,7 @@ class CodeReviewService(private val project: Project) {
         isRunning = true
         try {
             val settings = KCodeReviewSettings.getInstance()
-            require(settings.getApiKey().isNotBlank()) {
-                "Gemini API key is not configured. Open Settings → Tools → K Code Review."
-            }
+            val llmClient = LlmClientFactory.create(settings)
 
             val files = snapshot.files
                 .filter { it.content.isNotBlank() }
@@ -82,7 +79,7 @@ class CodeReviewService(private val project: Project) {
             for ((index, file) in files.withIndex()) {
                 log.info("Reviewing ${file.path} (${index + 1}/${files.size}) in ${snapshot.shortHash}")
                 val user = PromptBuilder.userPrompt(snapshot, file)
-                val raw = gemini.generate(system, user)
+                val raw = llmClient.generate(system, user)
                 val parsed = ReviewParser.parse(file.path, raw)
                 fileReviews += FileReview(
                     filePath = file.path,
