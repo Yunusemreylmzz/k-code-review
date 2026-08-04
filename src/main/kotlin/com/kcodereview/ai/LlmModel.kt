@@ -29,11 +29,51 @@ data class LlmModel(
             isCustom    = true,
         )
 
+        private fun gemini(displayName: String, modelId: String) = LlmModel(
+            displayName = displayName,
+            provider    = LlmProvider.GEMINI,
+            modelId     = modelId,
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent",
+        )
+
+        private fun qwen(displayName: String, modelId: String) = LlmModel(
+            displayName = displayName,
+            provider    = LlmProvider.OPENAI_COMPATIBLE,
+            modelId     = modelId,
+            // International DashScope OpenAI-compatible endpoint (Qwen / "Gwen").
+            endpointUrl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        )
+
         /**
          * Ordered list of all preset models.
          * [CUSTOM] is always last.
          */
         val ALL: List<LlmModel> = listOf(
+
+            // ── Google Gemini (working for new AQ. free-tier keys first) ───────
+            gemini("Gemini 3.6 Flash", "gemini-3.6-flash"),
+            gemini("Gemini 3.5 Flash", "gemini-3.5-flash"),
+            gemini("Gemini 3.5 Flash Lite", "gemini-3.5-flash-lite"),
+            gemini("Gemini 3.1 Flash Lite", "gemini-3.1-flash-lite"),
+            gemini("Gemini Flash (latest)", "gemini-flash-latest"),
+            gemini("Gemini Flash Lite (latest)", "gemini-flash-lite-latest"),
+            gemini("Gemini 3 Flash Preview", "gemini-3-flash-preview"),
+            gemini("Gemini 3 Pro Preview", "gemini-3-pro-preview"),
+            gemini("Gemini 3.1 Pro Preview", "gemini-3.1-pro-preview"),
+            gemini("Gemini Pro (latest)", "gemini-pro-latest"),
+            gemini("Gemini 2.0 Flash", "gemini-2.0-flash"),
+            gemini("Gemini 2.0 Flash Lite", "gemini-2.0-flash-lite"),
+            // Legacy — often 404 / free-tier quota 0 for new AI Studio keys:
+            gemini("Gemini 2.5 Flash (legacy)", "gemini-2.5-flash"),
+            gemini("Gemini 2.5 Pro (legacy)", "gemini-2.5-pro"),
+            gemini("Gemini 2.5 Flash Lite (legacy)", "gemini-2.5-flash-lite"),
+
+            // ── Qwen (Alibaba DashScope; often written “Gwen”) ────────────────
+            qwen("Qwen Plus", "qwen-plus"),
+            qwen("Qwen Max", "qwen-max"),
+            qwen("Qwen Turbo", "qwen-turbo"),
+            qwen("Qwen 2.5 Coder", "qwen2.5-coder-32b-instruct"),
+            qwen("Qwen 3 Coder", "qwen3-coder-plus"),
 
             // ── Anthropic ──────────────────────────────────────────────────────
             LlmModel(
@@ -50,23 +90,6 @@ data class LlmModel(
                 "Claude Sonnet 3.5",
                 LlmProvider.ANTHROPIC, "claude-3-5-sonnet-20241022",
                 "https://api.anthropic.com/v1/messages",
-            ),
-
-            // ── Google Gemini ─────────────────────────────────────────────────
-            LlmModel(
-                "Gemini 2.5 Pro",
-                LlmProvider.GEMINI, "gemini-2.5-pro",
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
-            ),
-            LlmModel(
-                "Gemini 2.5 Flash",
-                LlmProvider.GEMINI, "gemini-2.5-flash",
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-            ),
-            LlmModel(
-                "Gemini 2.0 Flash",
-                LlmProvider.GEMINI, "gemini-2.0-flash",
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
             ),
 
             // ── OpenAI ────────────────────────────────────────────────────────
@@ -102,7 +125,21 @@ data class LlmModel(
             CUSTOM,
         )
 
-        fun findByDisplayName(name: String): LlmModel =
-            ALL.firstOrNull { it.displayName == name } ?: CUSTOM
+        /** Old saved display names → current replacements. */
+        private val MIGRATIONS: Map<String, String> = mapOf(
+            "Gemini 2.5 Pro" to "Gemini 3.5 Flash",
+            "Gemini 2.5 Flash" to "Gemini 3.5 Flash",
+            "Gemini 2.0 Flash" to "Gemini 3.5 Flash",
+        )
+
+        fun normalizeDisplayName(name: String): String =
+            MIGRATIONS[name] ?: name
+
+        fun findByDisplayName(name: String): LlmModel {
+            val normalized = normalizeDisplayName(name)
+            return ALL.firstOrNull { it.displayName == normalized }
+                ?: ALL.firstOrNull { it.displayName == name }
+                ?: ALL.first { it.displayName == "Gemini 3.5 Flash" }
+        }
     }
 }

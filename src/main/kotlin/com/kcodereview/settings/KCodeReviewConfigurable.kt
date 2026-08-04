@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
+import com.kcodereview.ai.LlmClientFactory
 import com.kcodereview.ai.LlmModel
 import com.kcodereview.ai.LlmProvider
 import java.awt.Color
@@ -50,15 +51,15 @@ class KCodeReviewConfigurable : Configurable {
     )
     private val apiKeyField = JBPasswordField()
     private val promptUrlField = JBTextField()
-    private val maxFilesSpinner = JSpinner(SpinnerNumberModel(20, 1, 100, 1))
-    private val maxCharsSpinner = JSpinner(SpinnerNumberModel(40_000, 2_000, 200_000, 1_000))
-    private val includePatchCheck = JBCheckBox("Include git patch context in the AI prompt")
+    private val maxFilesSpinner = JSpinner(SpinnerNumberModel(8, 1, 100, 1))
+    private val maxCharsSpinner = JSpinner(SpinnerNumberModel(12_000, 2_000, 200_000, 1_000))
+    private val includePatchCheck = JBCheckBox("Prefer git diff in the AI prompt (faster, commit-scoped)")
     private val preCommitCheck = JBCheckBox(
         "Pre-commit review: block once on any finding; second Commit click proceeds",
     )
     private val testStatusLabel = JBLabel(" ").apply { foreground = Color(0x888888) }
     private val testButton = JButton("Test Connection").apply {
-        toolTipText = "Validates the API key and optional prompt URL."
+        toolTipText = "Sends a tiny ping to the selected LLM (Apply settings first for best results)."
         addActionListener { runConnectionTest() }
     }
 
@@ -89,7 +90,7 @@ class KCodeReviewConfigurable : Configurable {
     override fun getDisplayName(): String = "K Code Review"
 
     override fun createComponent(): JComponent {
-        apiKeyField.emptyText.text    = "Stored securely in PasswordSafe"
+        apiKeyField.emptyText.text    = "AI Studio key (AQ.… or AIza…)"
         customUrlField.emptyText.text = "https://api.example.com/v1/chat/completions"
         customModelIdField.emptyText.text = "e.g. llama3, mistral, my-model"
         promptUrlField.emptyText.text =
@@ -193,23 +194,50 @@ class KCodeReviewConfigurable : Configurable {
     // -------------------------------------------------------------------------
 
     private fun runConnectionTest() {
-        val keyTyped  = String(apiKeyField.password).trim()
+        val keyTyped = String(apiKeyField.password).trim()
         val promptUrl = promptUrlField.text.trim()
 
         setTestStatus("Testing…", Color(0x888888))
         testButton.isEnabled = false
 
         ProgressManager.getInstance().run(
-            object : Task.Backgroundable(null, "K Code Review: testing connection…", false) {
+            object : Task.Backgroundable(null, "K Code Review: testing connection…", true) {
                 override fun run(indicator: ProgressIndicator) {
+                    indicator.isIndeterminate = true
                     val result = runCatching {
-                        val key = keyTyped.ifBlank { KCodeReviewSettings.getInstance().getApiKey() }
+                        // Persist typed key so Test Connection works before Apply.
+                        if (keyTyped.isNotBlank()) {
+                            KCodeReviewSettings.getInstance().setApiKey(keyTyped)
+                        }
+                        val key = KCodeReviewSettings.getInstance().getApiKey()
                         require(key.isNotBlank()) { "LLM API key is empty. Enter your API key above." }
+
                         if (promptUrl.isNotBlank()) {
+                            indicator.text = "Fetching remote prompt…"
                             val prompt = RemoteConfigFetcher.fetch(promptUrl)
                             require(prompt.isNotBlank()) { "Prompt file returned an empty body." }
                         }
-                        "✅ OK — API key present${if (promptUrl.isNotBlank()) ", prompt fetched" else ""}."
+
+                        indicator.text = "Pinging LLM…"
+                        // Temporarily reflect UI model selection for the ping.
+                        val settings = KCodeReviewSettings.getInstance()
+                        val previousModel = settings.selectedModelName
+                        try {
+                            (modelBox.selectedItem as? LlmModel)?.let {
+                                settings.selectedModelName = it.displayName
+                            }
+                            val client = LlmClientFactory.create(settings)
+                            val reply = client.generate(
+                                "Reply with JSON only: {\"ok\":true}",
+                                "ping",
+                            )
+                            require(reply.isNotBlank()) { "LLM returned an empty response." }
+                            "✅ OK — LLM responded (${reply.length} chars)${
+                                if (promptUrl.isNotBlank()) ", prompt fetched" else ""
+                            }."
+                        } finally {
+                            settings.selectedModelName = previousModel
+                        }
                     }
                     SwingUtilities.invokeLater {
                         testButton.isEnabled = true

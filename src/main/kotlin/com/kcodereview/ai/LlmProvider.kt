@@ -11,8 +11,8 @@ enum class LlmProvider(
 ) {
     GEMINI(
         displayName  = "Google Gemini",
-        defaultUrl   = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        defaultModel = "gemini-2.0-flash",
+        defaultUrl   = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        defaultModel = "gemini-3.5-flash",
     ),
     OPENAI(
         displayName  = "OpenAI",

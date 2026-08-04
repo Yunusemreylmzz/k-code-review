@@ -10,6 +10,7 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.SlowOperations
+import com.kcodereview.ai.LlmModel
 import com.kcodereview.ai.LlmProvider
 
 @Service(Service.Level.APP)
@@ -29,8 +30,8 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
         /** GitHub (or raw) URL for the system prompt file (optional). */
         var promptFileUrl: String = "",
 
-        var maxFilesPerReview: Int = 20,
-        var maxCharsPerFile: Int = 40_000,
+        var maxFilesPerReview: Int = 8,
+        var maxCharsPerFile: Int = 12_000,
         var includePatchContext: Boolean = true,
         var preCommitReviewEnabled: Boolean = true,
     )
@@ -38,15 +39,26 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
     private var state = State()
 
     override fun getState(): State = state
-    override fun loadState(state: State) { this.state = state }
+    override fun loadState(state: State) {
+        this.state = state
+        // Migrate legacy Gemini 2.5* selections that fail on new AQ. free-tier keys.
+        this.state.selectedModelName = LlmModel.normalizeDisplayName(this.state.selectedModelName)
+        // Old defaults made reviews hang on large files — migrate once.
+        if (this.state.maxCharsPerFile == 40_000) {
+            this.state.maxCharsPerFile = 12_000
+        }
+        if (this.state.maxFilesPerReview == 20) {
+            this.state.maxFilesPerReview = 8
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Persisted properties
     // -------------------------------------------------------------------------
 
     var selectedModelName: String
-        get() = state.selectedModelName
-        set(value) { state.selectedModelName = value }
+        get() = LlmModel.normalizeDisplayName(state.selectedModelName)
+        set(value) { state.selectedModelName = LlmModel.normalizeDisplayName(value) }
 
     var customUrl: String
         get() = state.customUrl
@@ -86,10 +98,13 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
 
     fun getApiKey(): String = SlowOperations.knownIssue("KCR-1").use {
         PasswordSafe.instance.getPassword(credentialAttributes()).orEmpty()
+            .trim()
+            .replace(Regex("\\s+"), "")
     }
 
     fun setApiKey(apiKey: String) = SlowOperations.knownIssue("KCR-1").use {
-        val creds = if (apiKey.isBlank()) null else Credentials("llm", apiKey.trim())
+        val cleaned = apiKey.trim().replace(Regex("\\s+"), "")
+        val creds = if (cleaned.isBlank()) null else Credentials("llm", cleaned)
         PasswordSafe.instance.set(credentialAttributes(), creds)
     }
 
@@ -99,11 +114,12 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
 
     fun getCustomPrompt(): String {
         if (promptFileUrl.isBlank()) return ""
-        return runCatching { RemoteConfigFetcher.fetch(promptFileUrl) }.getOrDefault("")
+        // Soft fetch: never block review on remote prompt failure (5s timeout + negative cache).
+        return RemoteConfigFetcher.fetchOrEmpty(promptFileUrl)
     }
 
     companion object {
-        const val DEFAULT_MODEL_NAME = "Gemini 2.0 Flash"
+        const val DEFAULT_MODEL_NAME = "Gemini 3.5 Flash"
 
         fun getInstance(): KCodeReviewSettings = service()
 

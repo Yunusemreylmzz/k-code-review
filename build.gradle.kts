@@ -30,9 +30,13 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("version")
         ideaVersion {
-            sinceBuild = "251"
+            sinceBuild = "243"
             untilBuild = provider { null }
         }
+    }
+    publishing {
+        // First publish must be manual on plugins.jetbrains.com; Gradle works for updates.
+        token = providers.gradleProperty("intellijPlatformPublishingToken")
     }
 }
 

@@ -11,6 +11,7 @@ data class FindingDetailContent(
     val location: String,
     val explanation: String,
     val howToFix: String,
+    val howToFixSteps: List<String>,
     val fixedCode: String,
 ) {
     companion object {
@@ -20,7 +21,23 @@ data class FindingDetailContent(
             location = finding.locationLabel(),
             explanation = finding.message,
             howToFix = finding.howToFix,
+            howToFixSteps = parseHowToFixSteps(finding.howToFix),
             fixedCode = finding.fixedCode.orEmpty(),
         )
+
+        /**
+         * Splits how-to-fix text into stacked actionable steps.
+         * Accepts `1)`, `1.`, `-`, `•`, `*` prefixes.
+         */
+        fun parseHowToFixSteps(raw: String): List<String> {
+            val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+            if (lines.isEmpty()) return emptyList()
+
+            val stepped = lines.map { line ->
+                line.replace(Regex("""^(\d+[.)]\s*|[-•*]\s+)"""), "").trim()
+            }.filter { it.isNotBlank() }
+
+            return stepped.ifEmpty { listOf(raw.trim()) }
+        }
     }
 }

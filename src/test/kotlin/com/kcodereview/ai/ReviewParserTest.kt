@@ -2,6 +2,7 @@ package com.kcodereview.ai
 
 import com.kcodereview.model.FindingCategory
 import com.kcodereview.model.Severity
+import com.kcodereview.ui.FindingsTreeBuilder
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -92,5 +93,114 @@ class ReviewParserTest {
         val parsed = ReviewParser.parse("X.kt", raw)
         assertEquals(Severity.INFO, parsed.findings.single().severity)
         assertEquals(FindingCategory.BUG, parsed.findings.single().category)
+    }
+
+    @Test
+    fun `repairs trailing commas that gson strict mode rejects`() {
+        val raw = """
+            {
+              "summary": "ok",
+              "findings": [
+                {
+                  "severity": "MAJOR",
+                  "category": "BUG",
+                  "title": "t",
+                  "message": "m",
+                  "howToFix": "f",
+                  "line": 1,
+                },
+              ],
+            }
+        """.trimIndent()
+        val parsed = ReviewParser.parse("A.java", raw)
+        assertEquals("ok", parsed.summary)
+        assertEquals(1, parsed.findings.size)
+        assertEquals("t", parsed.findings.single().title)
+    }
+
+    @Test
+    fun `salvages truncated findings array instead of crashing`() {
+        // Mimics Gemini cutting off at max tokens mid-object (user error around line 47).
+        val raw = """
+            {
+              "summary": "Partial",
+              "findings": [
+                {
+                  "severity": "CRITICAL",
+                  "category": "VULNERABILITY",
+                  "title": "Hardcoded secret",
+                  "message": "API key in source",
+                  "howToFix": "Move to env",
+                  "line": 12
+                },
+                {
+                  "severity": "MAJOR",
+                  "category": "BUG",
+                  "title": "NPE risk",
+                  "message": "Unchecked null
+        """.trimIndent()
+
+        val parsed = ReviewParser.parse("Ctrl.java", raw)
+        assertEquals(1, parsed.findings.size)
+        assertEquals("Hardcoded secret", parsed.findings.single().title)
+        assertEquals(Severity.CRITICAL, parsed.findings.single().severity)
+    }
+
+    @Test
+    fun `ignores trailing garbage after balanced json object`() {
+        val raw = """
+            {"summary":"clean","findings":[]}
+            Thanks for reviewing!
+            }extra
+        """.trimIndent()
+        val parsed = ReviewParser.parse("A.kt", raw)
+        assertEquals("clean", parsed.summary)
+        assertTrue(parsed.findings.isEmpty())
+    }
+
+    @Test
+    fun `unreadable json returns empty findings without throwing`() {
+        val parsed = ReviewParser.parse("A.kt", "not json at all {{{")
+        assertTrue(parsed.findings.isEmpty())
+        assertTrue(parsed.summary.contains("unreadable", ignoreCase = true) || parsed.summary.isNotBlank())
+    }
+
+    @Test
+    fun `repairCommonIssues strips trailing commas`() {
+        val repaired = ReviewParser.repairCommonIssues("""{"a":1,}""")
+        assertEquals("""{"a":1}""", repaired)
+    }
+
+    @Test
+    fun `uses reported filePath to classify finding under another class`() {
+        val reviewed = "src/main/java/com/acme/First.java"
+        val other = "src/main/java/com/acme/Second.java"
+        val raw = """
+            {
+              "summary": "cross",
+              "findings": [{
+                "severity": "MAJOR",
+                "category": "BUG",
+                "title": "In Second",
+                "message": "m",
+                "howToFix": "f",
+                "filePath": "$other",
+                "line": 9
+              }]
+            }
+        """.trimIndent()
+        val parsed = ReviewParser.parse(reviewed, raw)
+        assertEquals(other, parsed.findings.single().filePath)
+        assertEquals(
+            "Second",
+            FindingsTreeBuilder.classNameOf(parsed.findings.single().filePath),
+        )
+    }
+
+    @Test
+    fun `resolveFindingPath keeps reviewed file for bare class names`() {
+        val reviewed = "src/main/java/com/acme/Foo.java"
+        assertEquals(reviewed, ReviewParser.resolveFindingPath(reviewed, "Foo"))
+        assertEquals(reviewed, ReviewParser.resolveFindingPath(reviewed, null))
     }
 }

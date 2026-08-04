@@ -27,8 +27,10 @@ class PromptBuilderTest {
     }
 
     @Test
-    fun `custom prompt overrides default`() {
+    fun `project rules overlay is appended to default prompt`() {
         val prompt = PromptBuilder.systemPrompt("Custom review rules")
-        assertEquals("Custom review rules", prompt)
+        assertTrue(prompt.contains("howToFix"))
+        assertTrue(prompt.contains("PROJECT RULES"))
+        assertTrue(prompt.contains("Custom review rules"))
     }
 }

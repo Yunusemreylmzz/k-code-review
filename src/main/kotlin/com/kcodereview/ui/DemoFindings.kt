@@ -8,53 +8,79 @@ import com.kcodereview.model.Severity
 
 object DemoFindings {
     fun reviewResult(): ReviewResult {
-        val findings = listOf(
+        val controllerFindings = listOf(
             Finding(
                 id = "demo-1",
-                filePath = "src/main/kotlin/com/kcodereview/service/CodeReviewService.kt",
+                filePath = "src/main/java/com/haradan/domain/controller/AdvertController.java",
                 severity = Severity.CRITICAL,
                 category = FindingCategory.VULNERABILITY,
-                title = "Hardcoded secret risk in configuration path",
-                message = "API keys must never be stored in source or logged. Prefer PasswordSafe / secret managers so credentials are not leaked via VCS or crash dumps.",
-                howToFix = "1) Keep secrets only in PasswordSafe.\n2) Never print the key.\n3) Rotate any key that was shared in chat or tickets.",
-                fixedCode = "fun getApiKey(): String =\n    PasswordSafe.instance.getPassword(attrs).orEmpty()",
+                title = "Hardcoded API secret in controller",
+                message = "API keys must never be stored in source. Prefer env / secret managers so credentials are not leaked via VCS.",
+                howToFix = "1) Move the secret to environment / vault.\n2) Inject via configuration.\n3) Rotate any key that was committed.",
+                fixedCode = "@Value(\"\${app.api.secret}\")\nprivate String apiSecret;",
                 line = 64,
                 ruleKey = "hardcoded-secret",
             ),
             Finding(
                 id = "demo-2",
-                filePath = "src/main/kotlin/com/kcodereview/ui/ReviewToolWindowPanel.kt",
+                filePath = "src/main/java/com/haradan/domain/controller/AdvertController.java",
                 severity = Severity.MAJOR,
                 category = FindingCategory.BUG,
-                title = "Navigate without null-safe file lookup",
-                message = "If the project base path or virtual file is missing, navigation should fail gracefully instead of silently doing nothing without user feedback.",
-                howToFix = "1) Resolve VirtualFile safely.\n2) If missing, show a balloon.\n3) Prefer relative project paths from the review payload.",
-                fixedCode = "val vf = LocalFileSystem.getInstance()\n    .findFileByPath(\"\$base/\${finding.filePath}\")\n    ?: return",
-                line = 220,
-                ruleKey = "null-safe-nav",
+                title = "String comparison with ==",
+                message = "Reference equality on Strings is incorrect; use equals().",
+                howToFix = "1) Replace == with Objects.equals or String.equals.\n2) Add a unit test for the branch.",
+                fixedCode = "if (Objects.equals(status, expected)) { ... }",
+                line = 112,
+                ruleKey = "string-equality",
             ),
+        )
+        val serviceFindings = listOf(
             Finding(
                 id = "demo-3",
-                filePath = "src/main/kotlin/com/kcodereview/commit/KCodeReviewCheckinHandlerFactory.kt",
+                filePath = "src/main/java/com/haradan/domain/service/AdvertService.java",
+                severity = Severity.MAJOR,
+                category = FindingCategory.BUG,
+                title = "Exception swallowed returning null",
+                message = "Catching Exception and returning null hides failures and causes NPEs downstream.",
+                howToFix = "1) Log with context.\n2) Rethrow a domain exception or return Optional.empty().",
+                fixedCode = "catch (Exception ex) {\n  log.error(\"Failed to load advert {}\", id, ex);\n  throw new AdvertNotFoundException(id, ex);\n}",
+                line = 88,
+                ruleKey = "swallowed-exception",
+            ),
+        )
+        val mapperFindings = listOf(
+            Finding(
+                id = "demo-4",
+                filePath = "src/main/java/com/haradan/domain/mapper/AdvertMapper.java",
                 severity = Severity.MINOR,
                 category = FindingCategory.CODE_SMELL,
-                title = "PasswordSafe read on EDT",
-                message = "Credential store access is a slow operation and must not run on the Event Dispatch Thread during commit checks.",
-                howToFix = "1) Read the API key inside Task.Modal / background thread.\n2) Or wrap with SlowOperations.knownIssue for UI-only settings reads.",
-                fixedCode = "ProgressManager.getInstance().run(object : Task.Modal(...) {\n  override fun run(indicator: ProgressIndicator) {\n    val key = settings.getApiKey()\n  }\n})",
-                line = 46,
-                ruleKey = "edt-slow-op",
+                title = "Nullable mapping without null check",
+                message = "Mapper may NPE when source nested fields are null.",
+                howToFix = "1) Use null-safe mapping.\n2) Or document non-null contract on DTO.",
+                fixedCode = "@Mapping(target = \"city\", source = \"address.city\", nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)",
+                line = 24,
+                ruleKey = "null-safe-map",
             ),
         )
         return ReviewResult(
             commitHash = "DEMO",
-            commitMessage = "Demo Code Analysis panel",
+            commitMessage = "Demo: multi-class Code Analysis grouping",
             reviewedAtEpochMs = System.currentTimeMillis(),
             fileReviews = listOf(
                 FileReview(
-                    filePath = "demo",
-                    summary = "Demo warnings to verify left list + right inspector layout.",
-                    findings = findings,
+                    filePath = "src/main/java/com/haradan/domain/controller/AdvertController.java",
+                    summary = "Controller issues",
+                    findings = controllerFindings,
+                ),
+                FileReview(
+                    filePath = "src/main/java/com/haradan/domain/service/AdvertService.java",
+                    summary = "Service issues",
+                    findings = serviceFindings,
+                ),
+                FileReview(
+                    filePath = "src/main/java/com/haradan/domain/mapper/AdvertMapper.java",
+                    summary = "Mapper issues",
+                    findings = mapperFindings,
                 ),
             ),
         )

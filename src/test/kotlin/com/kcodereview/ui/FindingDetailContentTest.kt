@@ -15,6 +15,25 @@ class FindingDetailContentTest {
         assertTrue(content.explanation.length > 20)
         assertTrue(content.howToFix.contains("1)"))
         assertTrue(content.fixedCode.isNotBlank())
+        assertEquals(3, content.howToFixSteps.size)
+        assertTrue(
+            content.howToFixSteps[0].contains("secret", ignoreCase = true) ||
+                content.howToFixSteps[0].contains("environment", ignoreCase = true) ||
+                content.howToFixSteps[0].contains("vault", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun `parseHowToFixSteps strips numbering and bullets`() {
+        val steps = FindingDetailContent.parseHowToFixSteps(
+            """
+            1) First step
+            2. Second step
+            - Third step
+            • Fourth step
+            """.trimIndent(),
+        )
+        assertEquals(listOf("First step", "Second step", "Third step", "Fourth step"), steps)
     }
 
     @Test
@@ -36,6 +55,7 @@ class FindingDetailContentTest {
             assertTrue(c.priority.isNotBlank())
             assertTrue(c.explanation.isNotBlank())
             assertTrue(c.howToFix.isNotBlank())
+            assertTrue(c.howToFixSteps.isNotEmpty())
         }
     }
 }

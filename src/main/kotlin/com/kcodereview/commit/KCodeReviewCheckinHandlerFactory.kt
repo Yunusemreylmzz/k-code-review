@@ -97,7 +97,7 @@ private class KCodeReviewCheckinHandler(
         }
 
         val commitMessage = panel.commitMessage.orEmpty()
-        val outcomeRef = AtomicReference<PreCommitOutcome>(PreCommitOutcome.Allow)
+        val outcomeRef = AtomicReference<PreCommitOutcome>(PreCommitOutcome.Allow())
 
         ProgressManager.getInstance().run(object : Task.Modal(
             project,
@@ -125,33 +125,31 @@ private class KCodeReviewCheckinHandler(
         val overrideService = project.getService(PreCommitOverrideService::class.java)
         val git = project.getService(GitCommitService::class.java)
 
-        indicator.text = "Reading staged changes…"
-        val staged = git.loadStagedChanges(commitMessage)
+        indicator.text = "Reading local changes (staged + unstaged)…"
+        val local = git.loadLocalChanges(commitMessage)
 
-        // Only review files that have actual text content (source files).
-        val reviewable: List<ChangedFile> = staged.files.filter { it.content.isNotBlank() }
+        // Review every dirty source file so multi-class issues are never skipped.
+        val reviewable: List<ChangedFile> = local.files.filter { it.content.isNotBlank() }
         if (reviewable.isEmpty()) {
             overrideService.clear()
-            return PreCommitOutcome.Allow
+            return PreCommitOutcome.Allow()
         }
 
-        // If the user already acknowledged findings for these exact staged files → allow.
+        // If the user already acknowledged findings for these exact local files → allow.
         val fingerprint = PreCommitOverrideService.fingerprint(reviewable)
         if (overrideService.consume(fingerprint)) {
             return PreCommitOutcome.AllowAfterOverride
         }
 
-        indicator.text = "K Code Review — Reviewing ${reviewable.size} changed file(s)…"
+        indicator.text = "K Code Review — Reviewing ${reviewable.size} class(es)…"
         val result = project.getService(CodeReviewService::class.java)
-            .reviewStagedChanges(commitMessage)
+            .reviewLocalChanges(commitMessage)
 
-        // Always show results in the tool window (even if no findings).
-        if (result != null) ReviewToolWindowFactory.show(project)
-
+        // Tool window + popup are opened on EDT in handleOutcome (not from this BGT thread).
         return when {
             result == null || !CommitGate.shouldBlock(result) -> {
                 overrideService.clear()
-                PreCommitOutcome.Allow
+                PreCommitOutcome.Allow(result)
             }
             else -> PreCommitOutcome.Block(result, fingerprint)
         }
@@ -161,7 +159,10 @@ private class KCodeReviewCheckinHandler(
 
     private fun handleOutcome(outcome: PreCommitOutcome): ReturnResult = when (outcome) {
 
-        is PreCommitOutcome.Allow -> ReturnResult.COMMIT
+        is PreCommitOutcome.Allow -> {
+            outcome.result?.let { ReviewToolWindowFactory.show(project) }
+            ReturnResult.COMMIT
+        }
 
         is PreCommitOutcome.AllowAfterOverride -> {
             Messages.showInfoMessage(
@@ -173,9 +174,22 @@ private class KCodeReviewCheckinHandler(
         }
 
         is PreCommitOutcome.Failed -> {
+            val msg = outcome.error.message.orEmpty()
+            val transient = msg.contains("HTTP 503") || msg.contains("HTTP 502") ||
+                msg.contains("HTTP 504") || msg.contains("temporarily unavailable") ||
+                msg.contains("high demand")
             val choice = Messages.showYesNoDialog(
                 project,
-                "K Code Review failed:\n${outcome.error.message}\n\nCommit anyway?",
+                buildString {
+                    append("K Code Review failed:\n")
+                    append(msg.take(600))
+                    append("\n\n")
+                    if (transient) {
+                        append("This looks temporary (Gemini overloaded). Retry in a minute, ")
+                        append("or switch model in Settings → Tools → K Code Review.\n\n")
+                    }
+                    append("Commit anyway?")
+                },
                 "K Code Review",
                 "Cancel Commit",
                 "Commit Anyway",
@@ -185,23 +199,17 @@ private class KCodeReviewCheckinHandler(
         }
 
         is PreCommitOutcome.Block -> {
-            // Tool window already opened in analyzeOffEdt; arm the override gate.
             project.getService(PreCommitOverrideService::class.java).arm(outcome.fingerprint)
-
-            val findings = CommitGate.findingsForDisplay(outcome.result)
-            val details = findings.take(8).joinToString("\n") { f ->
-                "• [${f.severity.displayName}] ${f.filePath}" +
-                    (f.line?.let { ":$it" } ?: "") +
-                    " — ${f.title}"
-            }
-            val more = if (findings.size > 8) "\n…and ${findings.size - 8} more" else ""
-
-            Messages.showWarningDialog(
-                project,
-                CommitGate.blockSummary(outcome.result) + "\n\n$details$more\n\n" +
-                    "See the K Code Review panel for full details.",
-                "Commit Blocked Once — K Code Review",
-            )
+            ReviewToolWindowFactory.show(project)
+            com.intellij.notification.NotificationGroupManager.getInstance()
+                .getNotificationGroup("K Code Review")
+                .createNotification(
+                    "Commit paused once",
+                    "${outcome.result.totalFindings} finding(s) — review the K Code Review panel. " +
+                        "Click Commit again to proceed with the same changes.",
+                    com.intellij.notification.NotificationType.WARNING,
+                )
+                .notify(project)
             ReturnResult.CANCEL
         }
     }
@@ -209,7 +217,7 @@ private class KCodeReviewCheckinHandler(
     // ── Internal outcome model ──────────────────────────────────────────────
 
     private sealed class PreCommitOutcome {
-        data object Allow : PreCommitOutcome()
+        data class Allow(val result: ReviewResult? = null) : PreCommitOutcome()
         data object AllowAfterOverride : PreCommitOutcome()
         data class Block(val result: ReviewResult, val fingerprint: String) : PreCommitOutcome()
         data class Failed(val error: Exception) : PreCommitOutcome()

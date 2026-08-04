@@ -9,11 +9,19 @@ import java.nio.charset.StandardCharsets
 object PromptBuilder {
 
     fun systemPrompt(customPrompt: String? = null): String {
-        val custom = customPrompt ?: runCatching {
+        val base = defaultSystemPrompt()
+        val overlay = customPrompt ?: runCatching {
             KCodeReviewSettings.getInstance().getCustomPrompt()
         }.getOrDefault("")
-        if (custom.isNotBlank()) return custom.trim()
-        return defaultSystemPrompt()
+        if (overlay.isBlank()) return base
+        // Remote file is project rules — append, never replace the JSON review contract.
+        return buildString {
+            append(base)
+            appendLine()
+            appendLine()
+            appendLine("### PROJECT RULES (additional constraints)")
+            appendLine(overlay.trim())
+        }
     }
 
     fun userPrompt(
@@ -21,12 +29,11 @@ object PromptBuilder {
         file: ChangedFile,
         maxCharsPerFile: Int = runCatching {
             KCodeReviewSettings.getInstance().maxCharsPerFile
-        }.getOrDefault(40_000),
+        }.getOrDefault(12_000),
         includePatchContext: Boolean = runCatching {
             KCodeReviewSettings.getInstance().includePatchContext
         }.getOrDefault(true),
     ): String {
-        val truncatedContent = truncate(file.content, maxCharsPerFile)
         val builder = StringBuilder()
         builder.appendLine("Commit: ${commit.hash}")
         builder.appendLine("Message: ${commit.message}")
@@ -34,15 +41,27 @@ object PromptBuilder {
         builder.appendLine("File: ${file.path}")
         builder.appendLine("Change type: ${file.changeType}")
         builder.appendLine()
-        builder.appendLine("### File content")
-        builder.appendLine("```")
-        builder.appendLine(truncatedContent)
-        builder.appendLine("```")
-        if (includePatchContext && !file.patch.isNullOrBlank()) {
-            builder.appendLine()
-            builder.appendLine("### Diff patch")
+
+        val patch = file.patch?.trim().orEmpty()
+        // Prefer diff-only when available — much faster and commit-scoped.
+        if (includePatchContext && patch.isNotBlank() && patch.length >= 40) {
+            builder.appendLine("### Diff patch (review these changes; use surrounding lines only as context)")
             builder.appendLine("```diff")
-            builder.appendLine(truncate(file.patch, maxCharsPerFile / 2))
+            builder.appendLine(truncate(patch, maxCharsPerFile))
+            builder.appendLine("```")
+            // Small local context window when the file is not huge.
+            val contentBudget = (maxCharsPerFile / 3).coerceAtLeast(2_000)
+            if (file.content.isNotBlank() && file.content.length <= contentBudget * 2) {
+                builder.appendLine()
+                builder.appendLine("### File excerpt (context)")
+                builder.appendLine("```")
+                builder.appendLine(truncate(file.content, contentBudget))
+                builder.appendLine("```")
+            }
+        } else {
+            builder.appendLine("### File content")
+            builder.appendLine("```")
+            builder.appendLine(truncate(file.content, maxCharsPerFile))
             builder.appendLine("```")
         }
         return builder.toString()

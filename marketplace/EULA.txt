@@ -1,0 +1,52 @@
+K CODE REVIEW — END USER LICENSE AGREEMENT (EULA)
+=================================================
+
+Copyright (c) 2026 K Code Review. All rights reserved.
+
+1. License grant
+   Subject to this EULA, K Code Review ("Licensor") grants you a
+   non-exclusive, non-transferable, revocable license to install and use
+   the "K Code Review" IntelliJ Platform plugin ("Software") for your
+   personal or internal business purposes.
+
+2. Ownership
+   The Software is licensed, not sold. All title, ownership rights, and
+   intellectual property rights in the Software remain with Licensor.
+   Source code is proprietary and is not licensed to you under this EULA.
+
+3. Restrictions
+   You may not (and may not permit others to):
+   (a) reverse engineer, decompile, or disassemble the Software except
+       to the extent permitted by applicable law;
+   (b) redistribute, sublicense, rent, lease, or sell the Software;
+   (c) remove or alter proprietary notices;
+   (d) use the Software to develop a competing product by extracting
+       its proprietary components.
+
+4. Third-party services
+   The Software may call third-party AI providers (for example Google,
+   OpenAI, Anthropic, Alibaba DashScope). Your use of those services is
+   subject to their terms. You are responsible for API keys, billing,
+   and data you send to those providers.
+
+5. No warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+6. Limitation of liability
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR SHALL NOT BE LIABLE
+   FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
+   DAMAGES, OR ANY LOSS OF DATA, PROFITS, OR BUSINESS, ARISING OUT OF
+   USE OF THE SOFTWARE.
+
+7. Termination
+   This license terminates automatically if you breach this EULA.
+   Upon termination you must stop using and uninstall the Software.
+
+8. Governing law
+   This EULA is governed by the laws applicable in your country of
+   residence, excluding conflict-of-law rules, unless mandatory consumer
+   protection law provides otherwise.
+
+By installing or using the Software, you agree to this EULA.

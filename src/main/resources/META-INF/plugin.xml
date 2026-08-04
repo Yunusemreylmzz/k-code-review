@@ -1,23 +1,85 @@
 <idea-plugin>
     <id>com.kcodereview.plugin</id>
     <name>K Code Review</name>
-    <vendor email="dev@kcodereview.local" url="https://github.com/k-code-review">K Code Review</vendor>
+    <vendor email="support@kcodereview.dev" url="https://github.com/k-code-review/k-code-review">K Code Review</vendor>
 
     <description><![CDATA[
-      <h2>AI-powered Git commit code review</h2>
+      <p><b>AI-powered Git commit code review</b> with SonarQube-style findings.</p>
       <p>
-        Reviews changed classes in a Git commit with Gemini AI and surfaces
-        SonarQube-style findings: severity, category, explanation, and how-to-fix guidance.
+        K Code Review analyzes staged or committed changes with Gemini, OpenAI, Anthropic, or Qwen,
+        then shows severity, category, explanation, how-to-fix steps, and an Applyable suggested fix.
       </p>
+      <h3>Highlights</h3>
       <ul>
-        <li>Pre-commit gate: reviews staged changes; blocks once on any finding, second Commit proceeds</li>
-        <li>Code Analysis tool window: warnings list + detail inspector (how-to-fix + fixed code)</li>
-        <li>Review latest or selected commit</li>
-        <li>Priority classification (BLOCKER → INFO)</li>
-        <li>Custom review prompts</li>
-        <li>Secure API key storage via PasswordSafe</li>
+        <li><b>Pre-commit gate</b> — reviews staged files; blocks once on findings; second Commit proceeds</li>
+        <li><b>Analysis panel</b> — warning list + detail inspector with numbered How to fix steps</li>
+        <li><b>Suggested Fix + Apply</b> — insert the proposed snippet at the finding location</li>
+        <li><b>Multi-model</b> — Gemini 3.x / Flash latest, Qwen, Claude, GPT, Custom endpoint</li>
+        <li><b>Secure API keys</b> — stored in IntelliJ PasswordSafe (never in project files)</li>
+        <li><b>Custom prompts</b> — optional remote prompt URL override</li>
       </ul>
+      <h3>Getting started</h3>
+      <ol>
+        <li>Settings → Tools → K Code Review → paste your LLM API key and pick a model</li>
+        <li>Tools → K Code Review → Review Latest Commit (or enable pre-commit review)</li>
+        <li>Open the K Code Review tool window for details and Apply fix</li>
+      </ol>
     ]]></description>
+
+    <change-notes><![CDATA[
+      <b>1.0.11</b>
+      <ul>
+        <li>No findings popup — opens the bottom list + detail panel directly</li>
+      </ul>
+      <b>1.0.10</b>
+      <ul>
+        <li>Default review scope = ALL dirty classes via IDE ChangeList + git (fixes missing 2nd class)</li>
+        <li>Tools → Review All Local Changes; pre-commit uses the same multi-class scope</li>
+      </ul>
+      <b>1.0.9</b>
+      <ul>
+        <li>Review Local Changes analyzes staged + unstaged classes (fixes missing 2nd class)</li>
+        <li>Per-file failure isolation; findings sorted by severity then line; empty reviewed classes visible</li>
+      </ul>
+      <b>1.0.8</b>
+      <ul>
+        <li>Findings tree grouped by class/file (Sonar-style) with Expand/Collapse</li>
+        <li>Popup summary also grouped by class</li>
+      </ul>
+      <b>1.0.7</b>
+      <ul>
+        <li>Robust AI JSON parsing: trailing commas, truncated Gemini output, markdown fences</li>
+        <li>Malformed LLM JSON no longer aborts review with Commit-anyway error</li>
+      </ul>
+      <b>1.0.6</b>
+      <ul>
+        <li>Fail-fast HTTP (8s connect / 45s request) — no more endless "Reviewing…"</li>
+        <li>Diff-first prompts + smaller defaults for faster reviews</li>
+        <li>Remote prompt overlays project rules (never replaces JSON contract); soft 5s fetch</li>
+        <li>Test Connection actually pings the selected LLM</li>
+      </ul>
+      <b>1.0.5</b>
+      <ul>
+        <li>Findings summary popup after Tools / manual reviews (not only on commit block)</li>
+        <li>Reliable analysis panel split: left warnings + right detail (JBSplitter)</li>
+        <li>Fixed plugin icon SVG (jsvg-compatible vector)</li>
+      </ul>
+      <b>1.0.4</b>
+      <ul>
+        <li>High-quality marketplace plugin logo</li>
+      </ul>
+      <b>1.0.3</b>
+      <ul>
+        <li>Updated plugin marketplace logo</li>
+      </ul>
+      <b>1.0.2</b>
+      <ul>
+        <li>Marketplace logo and plugin icons</li>
+        <li>Rich commit-blocked dialog with severity chips</li>
+        <li>How to fix as numbered steps + Suggested Fix Apply button</li>
+        <li>Gemini AQ. auth keys, 503 retry, updated Gemini 3.x / Qwen models</li>
+      </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
@@ -50,6 +112,10 @@
     <actions>
         <group id="KCodeReview.Menu" text="K Code Review" popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="KCodeReview.ReviewLocalChanges"
+                    class="com.kcodereview.actions.ReviewLocalChangesAction"
+                    text="Review All Local Changes"
+                    description="AI-review every dirty class (staged + unstaged)"/>
             <action id="KCodeReview.ReviewLatestCommit"
                     class="com.kcodereview.actions.ReviewLatestCommitAction"
                     text="Review Latest Commit"

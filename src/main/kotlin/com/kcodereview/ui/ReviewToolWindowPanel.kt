@@ -13,8 +13,8 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
+import com.intellij.ui.JBSplitter
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
@@ -24,50 +24,40 @@ import com.kcodereview.model.Severity
 import com.kcodereview.service.CodeReviewService
 import com.kcodereview.settings.KCodeReviewConfigurable
 import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.GridLayout
-import java.awt.Insets
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JTree
-import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
-import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
+import javax.swing.tree.TreeSelectionModel
 
 /**
- * Code Analysis — always 2 columns:
- * LEFT 40% warnings list | RIGHT 60% detail inspector.
- *
- * Single-click updates the right pane.
- * Double-click navigates to source (so the detail pane is not "lost" on first click).
+ * Code Analysis — left: class-grouped findings tree | right: detail inspector.
  */
 class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val log = Logger.getInstance(ReviewToolWindowPanel::class.java)
     private val service = project.getService(CodeReviewService::class.java)
-    
-    private val rootNode = DefaultMutableTreeNode("No analysis results")
+
+    private val rootNode = DefaultMutableTreeNode(FindingsTreeBuilder.Node.Root("No analysis results", 0, 0))
     private val treeModel = DefaultTreeModel(rootNode)
     private val warningsTree = Tree(treeModel).apply {
         isRootVisible = true
         showsRootHandles = true
-        cellRenderer = WarningTreeCellRenderer()
+        cellRenderer = FindingsTreeCellRenderer()
         emptyText.text = "No warnings"
+        selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
     }
 
-    private val detailPanel = FindingDetailPanel()
+    private val detailPanel = FindingDetailPanel(project)
 
     private val listener: (ReviewResult?) -> Unit = { result ->
         ApplicationManager.getApplication().invokeLater {
@@ -81,12 +71,19 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         minimumSize = Dimension(700, 280)
 
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-            add(JButton("Review Staged Changes", AllIcons.Actions.RunAll).also { btn ->
-                btn.toolTipText = "Run K Code Review on currently staged (changed) files — same as the pre-commit check"
-                btn.addActionListener { runStagedChanges() }
+            add(JButton("Review All Changes", AllIcons.Actions.RunAll).also { btn ->
+                btn.toolTipText =
+                    "Review EVERY dirty class (staged + unstaged). Use this for multi-class reviews."
+                btn.addActionListener { runLocalChanges() }
             })
             add(JButton("Review Latest Commit", AllIcons.Actions.Execute).also { btn ->
                 btn.addActionListener { runLatest() }
+            })
+            add(JButton("Expand All", AllIcons.Actions.Expandall).also { btn ->
+                btn.addActionListener { expandAll() }
+            })
+            add(JButton("Collapse Classes", AllIcons.Actions.Collapseall).also { btn ->
+                btn.addActionListener { collapseClasses() }
             })
             add(JButton("Load Demo", AllIcons.Actions.Preview).also { btn ->
                 btn.addActionListener {
@@ -100,68 +97,71 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
             })
         }
 
-        val north = JPanel(BorderLayout()).apply {
-            add(toolbar, BorderLayout.NORTH)
-        }
-
         val listPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(JBColor.border(), 0, 0, 0, 1), // Only right border
-                JBUI.Borders.empty()
+                JBUI.Borders.customLine(JBColor.border(), 0, 0, 0, 1),
+                JBUI.Borders.empty(),
             )
             background = JBColor.background()
             isOpaque = true
+            minimumSize = Dimension(240, 200)
             add(JBScrollPane(warningsTree).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         }
 
-        // GridBagLayout: weights guarantee both columns always get space.
-        val body = JPanel(GridBagLayout()).apply {
-            val left = GridBagConstraints().apply {
-                gridx = 0
-                gridy = 0
-                weightx = 0.40
-                weighty = 1.0
-                fill = GridBagConstraints.BOTH
-                insets = Insets(0, 0, 0, 6)
-            }
-            val right = GridBagConstraints().apply {
-                gridx = 1
-                gridy = 0
-                weightx = 0.60
-                weighty = 1.0
-                fill = GridBagConstraints.BOTH
-                insets = Insets(0, 6, 0, 0)
-            }
-            add(listPanel, left)
-            add(detailPanel, right)
+        detailPanel.minimumSize = Dimension(320, 200)
+
+        val body = JBSplitter(false, 0.42f).apply {
+            firstComponent = listPanel
+            secondComponent = detailPanel
+            setHonorComponentsMinimumSize(true)
+            dividerWidth = 3
         }
 
-        add(north, BorderLayout.NORTH)
+        add(JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH) }, BorderLayout.NORTH)
         add(body, BorderLayout.CENTER)
 
-        warningsTree.addTreeSelectionListener { e ->
-            val node = warningsTree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return@addTreeSelectionListener
-            val finding = node.userObject as? Finding
-            if (finding != null) {
-                log.info("Warning selected: ${finding.title}")
-                detailPanel.showFinding(finding)
+        warningsTree.addTreeSelectionListener {
+            when (val payload = selectedPayload()) {
+                is FindingsTreeBuilder.Node.FindingLeaf -> {
+                    log.info("Warning selected: ${payload.finding.title}")
+                    detailPanel.showFinding(payload.finding)
+                }
+                is FindingsTreeBuilder.Node.ClassGroup -> {
+                    detailPanel.showEmptyReviewSummaries(
+                        buildString {
+                            appendLine("${payload.className} — ${payload.count} issue(s)")
+                            if (payload.packagePath.isNotBlank()) appendLine(payload.packagePath)
+                            appendLine(payload.filePath)
+                            appendLine()
+                            if (payload.findings.isEmpty()) {
+                                appendLine(payload.reviewSummary.ifBlank { "No findings in this class." })
+                                appendLine()
+                                append("If you expected issues here, confirm the file is included via Review Local Changes (staged + unstaged).")
+                            } else {
+                                payload.severityCounts().entries
+                                    .sortedBy { it.key.rank }
+                                    .forEach { (sev, n) -> appendLine("• $n ${sev.displayName}") }
+                                appendLine()
+                                append("Select a finding under this class (sorted by severity, then line).")
+                            }
+                        },
+                    )
+                }
+                else -> Unit
             }
         }
         warningsTree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
-                val path = warningsTree.getPathForLocation(e.x, e.y) ?: return
-                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val finding = node.userObject as? Finding ?: return
-                if (e.clickCount >= 2) {
-                    navigateToFinding(finding)
-                }
+                if (e.clickCount < 2) return
+                val finding = (selectedPayload() as? FindingsTreeBuilder.Node.FindingLeaf)?.finding
+                    ?: return
+                navigateToFinding(finding)
             }
         })
 
         service.addListener(listener)
         val existing = service.lastResult
         if (existing == null) {
-            // First open: show demo so the 2-column layout is immediately visible.
             service.publishResult(DemoFindings.reviewResult())
         } else {
             render(existing)
@@ -173,23 +173,46 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         }
     }
 
+    private fun selectedPayload(): Any? =
+        (warningsTree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
+
     private fun runLatest() {
         runReview("Reviewing latest commit…") { service.reviewLatestCommit() }
     }
 
-    private fun runStagedChanges() {
-        runReview("Reviewing staged (changed) files…") {
-            service.reviewStagedChanges("Manual review")
-                ?: throw IllegalStateException("No staged source files to review. Stage some changes first.")
+    private fun runLocalChanges() {
+        runReview("Reviewing all dirty classes (staged + unstaged)…") {
+            service.reviewLocalChanges("Manual local review")
+                ?: throw IllegalStateException(
+                    "No local source changes to review. Edit or stage some files first.",
+                )
         }
     }
 
-    private fun runReview(progressText: String, block: () -> Any?) {
+    private fun runReview(progressText: String, block: () -> ReviewResult?) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "K Code Review", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = progressText
                 indicator.isIndeterminate = true
-                runCatching { block() }.onFailure { ex ->
+                try {
+                    val result = block()
+                    ApplicationManager.getApplication().invokeLater {
+                        ReviewToolWindowFactory.show(project)
+                        if (result != null) {
+                            val classes = result.fileReviews.joinToString {
+                                FindingsTreeBuilder.classNameOf(it.filePath)
+                            }
+                            com.intellij.notification.NotificationGroupManager.getInstance()
+                                .getNotificationGroup("K Code Review")
+                                .createNotification(
+                                    "Review complete",
+                                    "${result.totalFindings} finding(s) · ${result.fileReviews.size} class(es): $classes",
+                                    com.intellij.notification.NotificationType.INFORMATION,
+                                )
+                                .notify(project)
+                        }
+                    }
+                } catch (ex: Exception) {
                     ApplicationManager.getApplication().invokeLater {
                         Messages.showErrorDialog(project, ex.message ?: "Review failed", "K Code Review")
                     }
@@ -200,34 +223,73 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
 
     private fun render(result: ReviewResult?) {
         rootNode.removeAllChildren()
-        
+
         if (result == null) {
-            rootNode.userObject = "No analysis results."
+            rootNode.userObject = FindingsTreeBuilder.Node.Root("No analysis results.", 0, 0)
             treeModel.reload()
             detailPanel.showFinding(null)
             return
         }
-        
-        rootNode.userObject = "Found ${result.totalFindings} issues"
-        
-        result.findings.forEach { 
-            rootNode.add(DefaultMutableTreeNode(it))
+
+        val model = FindingsTreeBuilder.build(result)
+        rootNode.userObject = model.root
+
+        for (group in model.groups) {
+            val classNode = DefaultMutableTreeNode(group)
+            group.findings.forEach { finding ->
+                classNode.add(DefaultMutableTreeNode(FindingsTreeBuilder.Node.FindingLeaf(finding)))
+            }
+            rootNode.add(classNode)
         }
-        
+
+        // Files with a summary but zero findings still appear as empty groups? Skip — no noise.
         treeModel.reload()
-        
-        if (result.findings.isNotEmpty()) {
-            warningsTree.expandPath(TreePath(rootNode.path))
-            warningsTree.selectionPath = TreePath((rootNode.firstChild as DefaultMutableTreeNode).path)
-            detailPanel.showFinding(result.findings.first())
+        expandAll()
+
+        val first = model.firstFinding
+        if (first != null) {
+            selectFinding(first)
+            detailPanel.showFinding(first)
         } else {
             detailPanel.showEmptyReviewSummaries(
-                result.fileReviews.joinToString("\n\n") { "${it.filePath}: ${it.summary}" }
+                result.fileReviews.joinToString("\n\n") { "${FindingsTreeBuilder.classNameOf(it.filePath)}: ${it.summary}" }
                     .ifBlank { "No findings." },
             )
         }
         revalidate()
         repaint()
+    }
+
+    private fun selectFinding(finding: Finding) {
+        val root = rootNode
+        for (i in 0 until root.childCount) {
+            val classNode = root.getChildAt(i) as DefaultMutableTreeNode
+            for (j in 0 until classNode.childCount) {
+                val leaf = classNode.getChildAt(j) as DefaultMutableTreeNode
+                val payload = leaf.userObject as? FindingsTreeBuilder.Node.FindingLeaf ?: continue
+                if (payload.finding.id == finding.id || payload.finding === finding) {
+                    warningsTree.selectionPath = TreePath(leaf.path)
+                    warningsTree.scrollPathToVisible(TreePath(leaf.path))
+                    return
+                }
+            }
+        }
+    }
+
+    private fun expandAll() {
+        warningsTree.expandPath(TreePath(rootNode.path))
+        for (i in 0 until rootNode.childCount) {
+            val child = rootNode.getChildAt(i) as DefaultMutableTreeNode
+            warningsTree.expandPath(TreePath(child.path))
+        }
+    }
+
+    private fun collapseClasses() {
+        for (i in 0 until rootNode.childCount) {
+            val child = rootNode.getChildAt(i) as DefaultMutableTreeNode
+            warningsTree.collapsePath(TreePath(child.path))
+        }
+        warningsTree.expandPath(TreePath(rootNode.path))
     }
 
     private fun navigateToFinding(finding: Finding) {
@@ -239,9 +301,7 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
         OpenFileDescriptor(project, vf, line, 0).navigate(true)
     }
 
-    // MetricCard removed
-
-    private class WarningTreeCellRenderer : ColoredTreeCellRenderer() {
+    private class FindingsTreeCellRenderer : ColoredTreeCellRenderer() {
         override fun customizeCellRenderer(
             tree: JTree,
             value: Any?,
@@ -249,28 +309,61 @@ class ReviewToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
             expanded: Boolean,
             leaf: Boolean,
             row: Int,
-            hasFocus: Boolean
+            hasFocus: Boolean,
         ) {
             val node = value as? DefaultMutableTreeNode ?: return
-            val userObject = node.userObject
-            
-            if (userObject is String) {
-                append(userObject, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-            } else if (userObject is Finding) {
-                icon = when (userObject.severity) {
-                    Severity.BLOCKER, Severity.CRITICAL -> AllIcons.General.Error
-                    Severity.MAJOR -> AllIcons.General.Warning
-                    else -> AllIcons.General.Information
+            when (val payload = node.userObject) {
+                is FindingsTreeBuilder.Node.Root -> {
+                    icon = AllIcons.Toolwindows.Problems
+                    append(payload.label, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                 }
-                
-                val lineStr = userObject.line?.let { "$it" } ?: "-"
-                append("($lineStr) ", SimpleTextAttributes.GRAY_ATTRIBUTES)
-                append("${userObject.title}. ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                
-                if (userObject.ruleKey != null) {
-                    append(userObject.ruleKey, SimpleTextAttributes.GRAY_ATTRIBUTES)
+                is FindingsTreeBuilder.Node.ClassGroup -> {
+                    icon = AllIcons.Nodes.Class
+                    append(payload.className, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    append("  ", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                    if (payload.findings.isEmpty()) {
+                        val tag = when {
+                            payload.reviewSummary.contains("failed", ignoreCase = true) -> "failed"
+                            else -> "clean"
+                        }
+                        append("($tag)", SimpleTextAttributes.GRAY_ITALIC_ATTRIBUTES)
+                    } else {
+                        append("(${payload.count})", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                    }
+                    if (payload.packagePath.isNotBlank()) {
+                        append("  ", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                        append(payload.packagePath, SimpleTextAttributes.GRAY_ITALIC_ATTRIBUTES)
+                    }
+                    toolTipText = buildString {
+                        append(payload.filePath)
+                        if (payload.reviewSummary.isNotBlank()) {
+                            append(" — ")
+                            append(payload.reviewSummary.take(200))
+                        }
+                    }
                 }
+                is FindingsTreeBuilder.Node.FindingLeaf -> {
+                    val finding = payload.finding
+                    icon = severityIcon(finding.severity)
+                    val lineStr = finding.line?.toString() ?: "—"
+                    append("($lineStr) ", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                    append(finding.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    if (!finding.ruleKey.isNullOrBlank()) {
+                        append("  ", SimpleTextAttributes.GRAY_ATTRIBUTES)
+                        append(finding.ruleKey!!, SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor.GRAY))
+                    }
+                    toolTipText = "${finding.severity.displayName} · ${finding.category.displayName}"
+                }
+                is String -> append(payload, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                else -> append(payload?.toString().orEmpty(), SimpleTextAttributes.REGULAR_ATTRIBUTES)
             }
+            font = font.deriveFont(Font.PLAIN, 12f)
+        }
+
+        private fun severityIcon(severity: Severity) = when (severity) {
+            Severity.BLOCKER, Severity.CRITICAL -> AllIcons.General.Error
+            Severity.MAJOR -> AllIcons.General.Warning
+            else -> AllIcons.General.Information
         }
     }
 }

@@ -3,24 +3,23 @@ package com.kcodereview.ai
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import java.net.URI
-import java.net.http.HttpClient
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.time.Duration
 
 /**
  * LLM client for the OpenAI Chat Completions API **and any OpenAI-compatible endpoint**
- * (Ollama, Azure OpenAI, LM Studio, etc.).
- *
- * Auth: `Authorization: Bearer <apiKey>` header.
- * Model: sent in the request body.
+ * (Ollama, Azure OpenAI, LM Studio, DashScope, etc.).
  */
 class OpenAiLlmClient(
     private val apiKey: String,
     private val endpointUrl: String,
     private val modelName: String,
-    private val httpClient: HttpClient = GeminiClient.sharedHttpClient,
+    private val requestTimeout: Duration = HttpTransport.llmRequestTimeout,
     private val gson: Gson = Gson(),
+    private val sender: (HttpRequest) -> Pair<Int, String> = { req ->
+        val res = HttpTransport.send(req)
+        res.statusCode() to res.body()
+    },
 ) : LlmClient {
 
     override fun generate(systemPrompt: String, userPrompt: String): String {
@@ -32,33 +31,30 @@ class OpenAiLlmClient(
             "model" to modelName,
             "messages" to listOf(
                 mapOf("role" to "system", "content" to systemPrompt),
-                mapOf("role" to "user",   "content" to userPrompt),
+                mapOf("role" to "user", "content" to userPrompt),
             ),
             "temperature" to 0.2,
+            "max_tokens" to 4096,
             "response_format" to mapOf("type" to "json_object"),
         )
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create(endpointUrl))
-            .timeout(Duration.ofMinutes(2))
+            .timeout(requestTimeout)
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer $apiKey")
             .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(body)))
             .build()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-        check(response.statusCode() in 200..299) {
-            "OpenAI API error HTTP ${response.statusCode()}: ${response.body().take(500)}"
+        val (status, responseBody) = sender(request)
+        check(status in 200..299) {
+            "OpenAI API error HTTP $status: ${responseBody.take(500)}"
         }
 
-        return extractText(response.body())
+        return extractText(responseBody)
     }
 
     companion object {
-        /**
-         * Extracts the assistant message content from an OpenAI chat completions JSON response.
-         * Exposed as a companion function so tests can call it without auth.
-         */
         fun extractText(responseBody: String): String {
             val root = JsonParser.parseString(responseBody).asJsonObject
             val choices = root.getAsJsonArray("choices")
