@@ -27,6 +27,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+      <b>1.0.12</b>
+      <ul>
+        <li>High-quality plugin logo from brand artwork</li>
+      </ul>
       <b>1.0.11</b>
       <ul>
         <li>No findings popup — opens the bottom list + detail panel directly</li>
