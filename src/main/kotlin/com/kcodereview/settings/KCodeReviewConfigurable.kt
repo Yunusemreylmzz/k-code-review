@@ -16,7 +16,6 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
-import com.kcodereview.ai.LlmClientFactory
 import com.kcodereview.ai.LlmModel
 import com.kcodereview.ai.LlmProvider
 import com.kcodereview.log.ReviewLogPayloadBuilder
@@ -87,7 +86,8 @@ class KCodeReviewConfigurable : Configurable {
     )
     private val testStatusLabel = JBLabel(" ").apply { foreground = Color(0x888888) }
     private val testButton = JButton("Test Connection").apply {
-        toolTipText = "Sends a tiny ping to the selected LLM (Apply settings first for best results)."
+        toolTipText =
+            "Tests LLM API key, prompt file URL (if set), and Log API URL (if set)."
         addActionListener { runConnectionTest() }
     }
 
@@ -336,6 +336,9 @@ class KCodeReviewConfigurable : Configurable {
     private fun runConnectionTest() {
         val keyTyped = String(apiKeyField.password)
         val promptUrl = promptUrlField.text.trim()
+        val logUrl = logApiUrlField.text.trim()
+        val selectedModel = (modelBox.selectedItem as? LlmModel)?.displayName
+            ?: KCodeReviewSettings.DEFAULT_MODEL_NAME
 
         setTestStatus("Testing…", Color(0x888888))
         testButton.isEnabled = false
@@ -344,48 +347,40 @@ class KCodeReviewConfigurable : Configurable {
             object : Task.Backgroundable(null, "K Code Review: testing connection…", true) {
                 override fun run(indicator: ProgressIndicator) {
                     indicator.isIndeterminate = true
+                    val settings = KCodeReviewSettings.getInstance()
                     val result = runCatching {
                         if (ApiKeyFieldState.shouldPersist(keyTyped)) {
-                            KCodeReviewSettings.getInstance().setApiKey(keyTyped)
+                            settings.setApiKey(keyTyped)
                         }
-                        val key = KCodeReviewSettings.getInstance().getApiKey()
-                        require(key.isNotBlank()) { "LLM API key is empty. Enter your API key above and Apply." }
-
-                        if (promptUrl.isNotBlank()) {
-                            indicator.text = "Fetching remote prompt…"
-                            val prompt = RemoteConfigFetcher.fetch(promptUrl)
-                            require(prompt.isNotBlank()) { "Prompt file returned an empty body." }
+                        val apiKey = settings.getApiKey()
+                        val checks = SettingsConnectionTester.run(
+                            request = SettingsConnectionTester.Request(
+                                apiKey = apiKey,
+                                selectedModelName = selectedModel,
+                                customUrl = customUrlField.text.trim(),
+                                customModelId = customModelIdField.text.trim(),
+                                customProviderFormat = customFormatBox.selectedItem as LlmProvider,
+                                promptFileUrl = promptUrl,
+                                logApiUrl = logUrl,
+                            ),
+                            settings = settings,
+                            onProgress = { indicator.text = it },
+                        )
+                        val failed = checks.firstOrNull { !it.ok }
+                        if (failed != null) {
+                            error(SettingsConnectionTester.formatFailure(failed))
                         }
-
-                        indicator.text = "Pinging LLM…"
-                        val settings = KCodeReviewSettings.getInstance()
-                        val previousModel = settings.selectedModelName
-                        try {
-                            (modelBox.selectedItem as? LlmModel)?.let {
-                                settings.selectedModelName = it.displayName
-                            }
-                            val client = LlmClientFactory.create(settings)
-                            val reply = client.generate(
-                                "Reply with JSON only: {\"ok\":true}",
-                                "ping",
-                            )
-                            require(reply.isNotBlank()) { "LLM returned an empty response." }
-                            "✅ OK — LLM responded (${reply.length} chars)${
-                                if (promptUrl.isNotBlank()) ", prompt fetched" else ""
-                            }."
-                        } finally {
-                            settings.selectedModelName = previousModel
-                        }
+                        SettingsConnectionTester.formatSuccess(checks)
                     }
                     SwingUtilities.invokeLater {
                         testButton.isEnabled = true
-                        hasStoredApiKey = KCodeReviewSettings.getInstance().hasApiKey()
+                        hasStoredApiKey = settings.hasApiKey()
                         refreshApiKeyField()
                         if (result.isSuccess) {
                             setTestStatus(result.getOrThrow(), Color(0x2E7D32))
                         } else {
                             setTestStatus(
-                                "❌ ${result.exceptionOrNull()?.message ?: "Unknown error"}",
+                                result.exceptionOrNull()?.message ?: "❌ Unknown error",
                                 Color(0xC62828),
                             )
                         }

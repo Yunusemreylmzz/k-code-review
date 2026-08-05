@@ -16,35 +16,38 @@ object ReviewLogClient {
 
     val requestTimeout: Duration = Duration.ofSeconds(8)
 
-    fun post(apiUrl: String, jsonBody: String): Boolean {
+  /**
+     * Settings test: POST sample JSON and throw on failure (non-2xx or network error).
+     * @return HTTP status code on success
+     */
+    fun probe(apiUrl: String, jsonBody: String): Int {
         val url = apiUrl.trim()
-        if (url.isBlank()) return false
-        return runCatching {
-            require(url.startsWith("http://") || url.startsWith("https://")) {
-                "Log API URL must start with http:// or https://"
-            }
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(requestTimeout)
-                .header("Content-Type", "application/json; charset=utf-8")
-                .header("Accept", "application/json, */*")
-                .header("User-Agent", "K-Code-Review")
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .build()
+        require(url.isNotBlank()) { "Log API URL cannot be blank." }
+        require(url.startsWith("http://") || url.startsWith("https://")) {
+            "Log API URL must start with http:// or https://"
+        }
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .timeout(requestTimeout)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("Accept", "application/json, */*")
+            .header("User-Agent", "K-Code-Review")
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+            .build()
 
-            val response = HttpTransport.send(request)
-            val ok = response.statusCode() in 200..299
-            if (ok) {
-                log.info("Review log posted OK (HTTP ${response.statusCode()}) → $url")
-            } else {
-                log.warn(
-                    "Review log POST failed HTTP ${response.statusCode()} → $url: " +
-                        response.body().take(300),
-                )
-            }
-            ok
-        }.onFailure {
-            log.warn("Review log POST error → $url: ${it.message}")
-        }.getOrDefault(false)
+        val response = HttpTransport.send(request)
+        val status = response.statusCode()
+        if (status !in 200..299) {
+            error(
+                "Log API POST failed (HTTP $status): ${response.body().take(200)}",
+            )
+        }
+        log.info("Review log probe OK (HTTP $status) → $url")
+        return status
     }
+
+    fun post(apiUrl: String, jsonBody: String): Boolean =
+        runCatching { probe(apiUrl, jsonBody); true }
+            .onFailure { log.warn("Review log POST error → ${apiUrl.trim()}: ${it.message}") }
+            .getOrDefault(false)
 }

@@ -27,6 +27,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+      <b>1.0.19</b>
+      <ul>
+        <li>Test Connection validates LLM API key, prompt URL, and Log API URL (when set)</li>
+      </ul>
       <b>1.0.18</b>
       <ul>
         <li>Settings UI: Metric &amp; Logs collapse (read-only log URL + request example)</li>

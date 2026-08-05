@@ -256,4 +256,20 @@ class ReviewLogClientTest {
         assertFalse(ReviewLogClient.post("", "{}"))
         assertFalse(ReviewLogClient.post("   ", "{}"))
     }
+
+    @Test
+    fun `probe rejects blank url`() {
+        val ex = org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            ReviewLogClient.probe("", "{}")
+        }
+        assertTrue(ex.message!!.contains("blank", ignoreCase = true))
+    }
+
+    @Test
+    fun `probe rejects non-http url`() {
+        val ex = org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            ReviewLogClient.probe("ftp://x", "{}")
+        }
+        assertTrue(ex.message!!.contains("http://"))
+    }
 }
