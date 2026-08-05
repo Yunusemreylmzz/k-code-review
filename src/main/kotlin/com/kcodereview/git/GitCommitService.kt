@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
+import com.kcodereview.log.GitProjectInfo
 import com.kcodereview.model.ChangeType
 import com.kcodereview.model.ChangedFile
 import com.kcodereview.model.CommitSnapshot
@@ -37,6 +38,55 @@ class GitCommitService(private val project: Project) {
         val items = listRecentCommits(1)
         require(items.isNotEmpty()) { "No commits found in this repository." }
         return loadCommit(items.first().hash)
+    }
+
+    /**
+     * Resolves git user + remote repo metadata for review logging.
+     */
+    fun loadGitProjectInfo(): GitProjectInfo {
+        return runCatching {
+            val repo = requireRepository()
+            val username = runCatching {
+                runGit(repo, GitCommand.CONFIG, listOf("--get", "user.name"))
+            }.getOrDefault("").trim().ifBlank {
+                System.getProperty("user.name").orEmpty()
+            }
+            val userEmail = runCatching {
+                runGit(repo, GitCommand.CONFIG, listOf("--get", "user.email"))
+            }.getOrDefault("").trim()
+
+            val remoteUrl = repo.remotes
+                .firstOrNull { it.name == "origin" }
+                ?.firstUrl
+                ?: repo.remotes.firstOrNull()?.firstUrl
+                ?: ""
+
+            val (owner, name) = GitProjectInfo.parseRemote(remoteUrl)
+            val branch = repo.currentBranchName.orEmpty()
+
+            GitProjectInfo(
+                username = username,
+                userEmail = userEmail,
+                repoName = name.ifBlank {
+                    project.name
+                },
+                repoOwner = owner,
+                repoFullName = when {
+                    owner.isNotBlank() && name.isNotBlank() -> "$owner/$name"
+                    name.isNotBlank() -> name
+                    else -> project.name
+                },
+                remoteUrl = remoteUrl,
+                branch = branch,
+            )
+        }.getOrElse {
+            log.warn("loadGitProjectInfo failed: ${it.message}")
+            GitProjectInfo.EMPTY.copy(
+                username = System.getProperty("user.name").orEmpty(),
+                repoName = project.name,
+                repoFullName = project.name,
+            )
+        }
     }
 
     /**

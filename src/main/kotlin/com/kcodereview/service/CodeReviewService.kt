@@ -8,6 +8,7 @@ import com.kcodereview.ai.LlmClientFactory
 import com.kcodereview.ai.PromptBuilder
 import com.kcodereview.ai.ReviewParser
 import com.kcodereview.git.GitCommitService
+import com.kcodereview.log.ReviewLogPublisher
 import com.kcodereview.model.CommitSnapshot
 import com.kcodereview.model.FileReview
 import com.kcodereview.model.ReviewResult
@@ -147,6 +148,7 @@ class CodeReviewService(private val project: Project) {
             )
             lastResult = result
             listeners.forEach { it(result) }
+            ReviewLogPublisher.publishAsync(project, result, reviewAuthor = snapshot.author)
             return result
         } finally {
             isRunning = false

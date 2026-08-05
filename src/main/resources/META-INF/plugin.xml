@@ -27,6 +27,31 @@
     ]]></description>
 
     <change-notes><![CDATA[
+      <b>1.0.18</b>
+      <ul>
+        <li>Settings UI: Metric &amp; Logs collapse (read-only log URL + request example)</li>
+      </ul>
+      <b>1.0.17</b>
+      <ul>
+        <li>Fix LLM API key persistence (IDE config backup + reliable Apply); no fake mask overwrite</li>
+      </ul>
+      <b>1.0.16</b>
+      <ul>
+        <li>Settings: read-only slim example body with Copy; LLM API key stays filled after restart</li>
+      </ul>
+      <b>1.0.15</b>
+      <ul>
+        <li>Slim Log API payload: severity counts only (no finding/issue details)</li>
+      </ul>
+      <b>1.0.14</b>
+      <ul>
+        <li>SOLID review-log schema: pluggable sections/fields for easy request extension</li>
+      </ul>
+      <b>1.0.13</b>
+      <ul>
+        <li>Optional Log API URL in Settings — POSTs review JSON (git user, repo, findings)</li>
+        <li>Example request template with inactive/active field styling</li>
+      </ul>
       <b>1.0.12</b>
       <ul>
         <li>High-quality plugin logo from brand artwork</li>

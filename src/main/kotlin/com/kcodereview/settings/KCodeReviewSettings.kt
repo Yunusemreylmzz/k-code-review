@@ -9,7 +9,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
-import com.intellij.util.SlowOperations
+import com.intellij.openapi.diagnostic.Logger
 import com.kcodereview.ai.LlmModel
 import com.kcodereview.ai.LlmProvider
 
@@ -30,6 +30,15 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
         /** GitHub (or raw) URL for the system prompt file (optional). */
         var promptFileUrl: String = "",
 
+        /** Optional HTTP endpoint that receives review log JSON (POST). */
+        var logApiUrl: String = "",
+
+        /**
+         * LLM API key backup in IDE config (not project VCS).
+         * PasswordSafe is preferred; this survives when PasswordSafe is memory-only / unavailable.
+         */
+        var storedApiKey: String = "",
+
         var maxFilesPerReview: Int = 8,
         var maxCharsPerFile: Int = 12_000,
         var includePatchContext: Boolean = true,
@@ -49,6 +58,10 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
         }
         if (this.state.maxFilesPerReview == 20) {
             this.state.maxFilesPerReview = 8
+        }
+        // Drop accidental placeholder persisted by older builds.
+        if (this.state.storedApiKey.trim() == ApiKeyFieldState.SAVED_MASK) {
+            this.state.storedApiKey = ""
         }
     }
 
@@ -76,6 +89,10 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
         get() = state.promptFileUrl
         set(value) { state.promptFileUrl = value.trim() }
 
+    var logApiUrl: String
+        get() = state.logApiUrl
+        set(value) { state.logApiUrl = value.trim() }
+
     var maxFilesPerReview: Int
         get() = state.maxFilesPerReview.coerceIn(1, 100)
         set(value) { state.maxFilesPerReview = value.coerceIn(1, 100) }
@@ -93,19 +110,44 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
         set(value) { state.preCommitReviewEnabled = value }
 
     // -------------------------------------------------------------------------
-    // API key — PasswordSafe (never written to XML)
+    // API key — PasswordSafe + durable IDE-config backup
     // -------------------------------------------------------------------------
 
-    fun getApiKey(): String = SlowOperations.knownIssue("KCR-1").use {
-        PasswordSafe.instance.getPassword(credentialAttributes()).orEmpty()
-            .trim()
-            .replace(Regex("\\s+"), "")
+    fun hasApiKey(): Boolean = getApiKey().isNotBlank()
+
+    fun getApiKey(): String {
+        val fromSafe = readPasswordSafe()
+        if (fromSafe.isNotBlank()) {
+            if (state.storedApiKey != fromSafe) {
+                state.storedApiKey = fromSafe
+            }
+            return fromSafe
+        }
+        return cleanKey(state.storedApiKey)
     }
 
-    fun setApiKey(apiKey: String) = SlowOperations.knownIssue("KCR-1").use {
-        val cleaned = apiKey.trim().replace(Regex("\\s+"), "")
-        val creds = if (cleaned.isBlank()) null else Credentials("llm", cleaned)
-        PasswordSafe.instance.set(credentialAttributes(), creds)
+    fun setApiKey(apiKey: String) {
+        val cleaned = cleanKey(apiKey)
+        if (cleaned == ApiKeyFieldState.SAVED_MASK) return
+
+        state.storedApiKey = cleaned
+        writePasswordSafe(cleaned)
+    }
+
+    private fun readPasswordSafe(): String =
+        runCatching {
+            PasswordSafe.instance.getPassword(credentialAttributes()).orEmpty()
+        }.onFailure {
+            log.warn("PasswordSafe get failed: ${it.message}")
+        }.getOrDefault("").let(::cleanKey)
+
+    private fun writePasswordSafe(cleaned: String) {
+        runCatching {
+            val creds = if (cleaned.isBlank()) null else Credentials("k-code-review", cleaned)
+            PasswordSafe.instance.set(credentialAttributes(), creds)
+        }.onFailure {
+            log.warn("PasswordSafe set failed (using IDE config backup): ${it.message}")
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -121,9 +163,14 @@ class KCodeReviewSettings : PersistentStateComponent<KCodeReviewSettings.State> 
     companion object {
         const val DEFAULT_MODEL_NAME = "Gemini 3.5 Flash"
 
+        private val log = Logger.getInstance(KCodeReviewSettings::class.java)
+
         fun getInstance(): KCodeReviewSettings = service()
 
         private fun credentialAttributes(): CredentialAttributes =
             CredentialAttributes(generateServiceName("K Code Review", "LLM API Key"))
+
+        fun cleanKey(raw: String): String =
+            raw.trim().replace(Regex("\\s+"), "")
     }
 }

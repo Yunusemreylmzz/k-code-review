@@ -87,7 +87,8 @@ private class KCodeReviewCheckinHandler(
             val choice = Messages.showYesNoDialog(
                 project,
                 "K Code Review is enabled, but no LLM API key is configured.\n\n" +
-                    "Open Settings now, or commit without AI review?",
+                    "Open Settings → Tools → K Code Review, paste your key, click Apply, then commit again.\n\n" +
+                    "Or commit without AI review?",
                 "K Code Review",
                 "Cancel Commit",
                 "Commit Without Review",
